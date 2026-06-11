@@ -1,0 +1,1941 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Business Plan H2 2026</title>
+  <script>
+// TinyChart v2 — Chart.js 4 compatible, self-contained
+(function(root){
+'use strict';
+var TC=function(ctx,cfg){
+  this.ctx=ctx; this.canvas=ctx.canvas;
+  this.config=cfg; this.data=cfg.data||{labels:[],datasets:[]};
+  this.options=cfg.options||{}; this._plugins=cfg.plugins||[];
+  this._hidden={}; this._meta={}; this._tipEl=null; this._ro=null;
+  // Size canvas to container
+  var par=this.canvas.parentElement;
+  if(par){this.canvas.style.width='100%';this.canvas.style.height='100%';}
+  this._render(); this._wire();
+};
+TC.prototype.destroy=function(){
+  if(this._ro)this._ro.disconnect();
+  this.canvas.onmousemove=null; this.canvas.onmouseleave=null;
+  this.ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
+};
+TC.prototype.update=function(){this._render();};
+TC.prototype.getDatasetMeta=function(i){
+  return this._meta[i]||{data:Array.from({length:(this.data.labels||[]).length},function(){return{x:0,y:0,base:0};}),hidden:!!this._hidden[i]};
+};
+TC.prototype._wire=function(){
+  var self=this,last=-1;
+  if(typeof ResizeObserver!=='undefined'){
+    self._ro=new ResizeObserver(function(){self._render();});
+    self._ro.observe(self.canvas.parentElement||self.canvas);
+  }
+  function onMove(e){
+    var r=self.canvas.getBoundingClientRect(),mx=e.clientX-r.left;
+    var n=(self.data.labels||[]).length; if(!n||!self._plotW)return;
+    var idx=Math.floor((mx-self._padL)/self._plotW*n);
+    if(idx<0||idx>=n)idx=-1;
+    if(idx!==last){last=idx;self._render(idx);}
+  }
+  function onLeave(){last=-1;self._render(-1);}
+  this.canvas.onmousemove=onMove; this.canvas.onmouseleave=onLeave;
+};
+// Bezier smoothing (Catmull-Rom)
+function drawSmooth(ctx,pts,tension){
+  if(!pts.length)return;
+  ctx.moveTo(pts[0].x,pts[0].y);
+  for(var k=1;k<pts.length;k++){
+    var p0=pts[k-2]||pts[k-1],p1=pts[k-1],p2=pts[k],p3=pts[k+1]||p2;
+    var cp1x=p1.x+(p2.x-p0.x)*tension/3,cp1y=p1.y+(p2.y-p0.y)*tension/3;
+    var cp2x=p2.x-(p3.x-p1.x)*tension/3,cp2y=p2.y-(p3.y-p1.y)*tension/3;
+    ctx.bezierCurveTo(cp1x,cp1y,cp2x,cp2y,p2.x,p2.y);
+  }
+}
+// Compact tick formatter: max ~4 chars
+function fmtTick(v,cb){
+  if(cb)return cb(v);
+  var a=Math.abs(v);
+  if(a>=1e6)return(v/1e6).toFixed(a>=10e6?1:2)+'M';
+  if(a>=1e3)return(v/1e3).toFixed(a>=100e3?1:a>=10e3?1:1)+'K';
+  return v.toFixed(Math.abs(v)<10?2:1);
+}
+TC.prototype._render=function(hoverIdx){
+  var cv=this.canvas,ctx=this.ctx;
+  var par=cv.parentElement;
+  var W=par?par.clientWidth:cv.offsetWidth||800;
+  var H=par?par.clientHeight:cv.offsetHeight||300;
+  if(W<10)W=800; if(H<10)H=300;
+  var dpr=root.devicePixelRatio||1;
+  cv.width=W*dpr; cv.height=H*dpr;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,W,H);
+  var datasets=this.data.datasets||[],labels=this.data.labels||[];
+  var N=labels.length; if(!N)return;
+  var scales=this.options.scales||{};
+  var yL=scales.yLeft||scales.y||null,yR=scales.yRight||null;
+  var hasR=!!yR;
+  var padT=(this.options.layout&&this.options.layout.padding&&this.options.layout.padding.top)||24;
+  var padB=34,padL=yL?60:12,padR=hasR?58:16;
+  var PW=W-padL-padR,PH=H-padT-padB;
+  this._padL=padL; this._plotW=PW;
+  if(PW<20||PH<20)return;
+  var step=PW/N;
+  // Collect stacks
+  var stacks={};
+  datasets.forEach(function(d,i){if(d.stack){stacks[d.stack]=stacks[d.stack]||[];stacks[d.stack].push(i);}});
+  var isStacked=Object.keys(stacks).length>0;
+  // Axis ranges
+  function getRange(idxs,stk){
+    var mn=Infinity,mx=-Infinity;
+    if(stk){
+      for(var k in stacks){for(var j=0;j<N;j++){var p=0,n2=0;stacks[k].forEach(function(di){if(this._hidden[di])return;var v=datasets[di].data[j];if(v!=null){if(v>=0)p+=v;else n2+=v;}}.bind(this));mn=Math.min(mn,n2);mx=Math.max(mx,p);}}} 
+    else idxs.forEach(function(i){if(this._hidden[i])return;(datasets[i].data||[]).forEach(function(v){if(v!=null){mn=Math.min(mn,v);mx=Math.max(mx,v);}});}.bind(this));
+    if(!isFinite(mn)){mn=0;mx=1;}if(mn===mx){mn-=1;mx+=1;}
+    var r=mx-mn;mn-=r*0.04;mx+=r*0.18;return{min:mn,max:mx};
+  }
+  var lIdxs=[],rIdxs=[];
+  datasets.forEach(function(d,i){(d.yAxisID==='yRight'?rIdxs:lIdxs).push(i);});
+  var lR=getRange.call(this,lIdxs,isStacked);
+  var rR=hasR?getRange.call(this,rIdxs,false):null;
+  function toYL(v){return padT+PH-(v-lR.min)/(lR.max-lR.min)*PH;}
+  function toYR(v){return rR?padT+PH-(v-rR.min)/(rR.max-rR.min)*PH:padT;}
+  function toY(d,v){return d.yAxisID==='yRight'?toYR(v):toYL(v);}
+  var y0L=toYL(Math.max(lR.min,Math.min(0,lR.max)));
+  // Grid & axes
+  var gcol=(yL&&yL.grid&&yL.grid.color)||'rgba(0,0,0,0.045)';
+  for(var g=0;g<=5;g++){
+    var gy=padT+PH*g/5;
+    ctx.strokeStyle=gcol;ctx.lineWidth=1;ctx.setLineDash([]);
+    ctx.beginPath();ctx.moveTo(padL,gy);ctx.lineTo(padL+PW,gy);ctx.stroke();
+    var lv=lR.max-(lR.max-lR.min)*g/5;
+    if(yL||!hasR){ctx.fillStyle='#717182';ctx.font='10px Montserrat,sans-serif';ctx.textAlign='right';ctx.fillText(fmtTick(lv,yL&&yL.ticks&&yL.ticks.callback),padL-6,gy+4);}
+    if(hasR&&rR){var rv=rR.max-(rR.max-rR.min)*g/5;ctx.fillStyle='#aaa';ctx.textAlign='left';ctx.fillText(fmtTick(rv,yR&&yR.ticks&&yR.ticks.callback),padL+PW+6,gy+4);}
+  }
+  ctx.strokeStyle='rgba(0,0,0,0.08)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(padL,y0L);ctx.lineTo(padL+PW,y0L);ctx.stroke();
+  ctx.fillStyle='#717182';ctx.font='11px Montserrat,sans-serif';ctx.textAlign='center';
+  labels.forEach(function(l,i){ctx.fillText(l,padL+(i+0.5)*step,padT+PH+22);});
+  // Stacked bars
+  if(isStacked){
+    var skeys=Object.keys(stacks),ns=skeys.length;
+    var bw=step*0.72/ns; this._meta={};
+    skeys.forEach(function(sk,gi){
+      var off=(gi-ns/2+0.5)*bw;
+      for(var j=0;j<N;j++){
+        var cx=padL+(j+0.5)*step+off,posY=y0L,negY=y0L;
+        stacks[sk].forEach(function(di){
+          if(this._hidden[di])return;
+          var v=datasets[di].data[j];if(v==null)return;
+          var h=Math.abs(v)/(lR.max-lR.min)*PH,yS,yE;
+          if(v>=0){yS=posY;yE=posY-h;posY=yE;}else{yS=negY;yE=negY+h;negY=yE;}
+          var bg=datasets[di].backgroundColor;if(typeof bg==='function')bg=bg(v);else if(Array.isArray(bg))bg=bg[j]||'#888';
+          ctx.fillStyle=bg||'#888';ctx.fillRect(cx-bw/2,Math.min(yS,yE),bw,Math.max(1,Math.abs(yE-yS)));
+          if(!this._meta[di])this._meta[di]={data:[],hidden:false};
+          this._meta[di].data[j]={x:cx,y:Math.min(yS,yE),base:Math.max(yS,yE)};
+        }.bind(this));
+      }
+    }.bind(this));
+  }
+  // Non-stacked bars
+  var bDsets=datasets.map(function(d,i){return{d:d,i:i};}).filter(function(x){return !x.d.stack&&(x.d.type==='bar'||(this.config.type==='bar'&&!x.d.type));}.bind(this));
+  var nb=bDsets.length;
+  bDsets.forEach(function(x,bi){
+    if(this._hidden[x.i])return;
+    var d=x.d,bw2=step*0.7/Math.max(nb,1),off2=(bi-nb/2+0.5)*bw2;
+    d.data.forEach(function(v,j){
+      if(v==null)return;
+      var cx=padL+(j+0.5)*step+off2,yv=toY(d,v);
+      var yb=d.yAxisID==='yRight'?toYR(Math.max(rR&&rR.min||0,Math.min(0,rR&&rR.max||0))):y0L;
+      var bg=d.backgroundColor;if(typeof bg==='function')bg=bg(v);else if(Array.isArray(bg))bg=bg[j]||'rgba(170,170,170,0.35)';
+      if(!bg||bg==='transparent')return;
+      ctx.fillStyle=bg;ctx.fillRect(cx-bw2/2,Math.min(yv,yb),bw2,Math.max(1,Math.abs(yv-yb)));
+    });
+  }.bind(this));
+  // Lines
+  var isLineDS=function(d){return d.type==='line'||(this.config.type==='line'&&d.type!=='bar');}.bind(this);
+  datasets.forEach(function(d,i){
+    if(this._hidden[i]||!isLineDS(d))return;
+    var pts=[];d.data.forEach(function(v,j){if(v!=null)pts.push({x:padL+(j+0.5)*step,y:toY(d,v),j:j});});
+    if(!pts.length)return;
+    ctx.save();ctx.setLineDash(d.borderDash||[]);ctx.strokeStyle=d.borderColor||'#7145D6';
+    ctx.lineWidth=d.borderWidth||2;ctx.lineJoin='round';ctx.lineCap='round';
+    var t=d.tension||0;
+    ctx.beginPath();if(t>0)drawSmooth(ctx,pts,t);else{pts.forEach(function(p,k){k?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y);});}
+    ctx.stroke();
+    var r=d.pointRadius!=null?d.pointRadius:3;
+    if(r>0){ctx.setLineDash([]);ctx.fillStyle=d.pointBackgroundColor||d.borderColor||'#7145D6';pts.forEach(function(p){ctx.beginPath();ctx.arc(p.x,p.y,r,0,6.283);ctx.fill();});}
+    ctx.restore();
+  }.bind(this));
+  // Hover line + tooltip
+  if(hoverIdx!=null&&hoverIdx>=0){
+    var hx=padL+(hoverIdx+0.5)*step;
+    ctx.strokeStyle='rgba(100,100,100,0.15)';ctx.lineWidth=1;ctx.setLineDash([4,3]);
+    ctx.beginPath();ctx.moveTo(hx,padT);ctx.lineTo(hx,padT+PH);ctx.stroke();ctx.setLineDash([]);
+    var tipCfg=(this.options.plugins&&this.options.plugins.tooltip)||{};
+    var tipCb=tipCfg.callbacks&&tipCfg.callbacks.label;
+    var hlines=[labels[hoverIdx]];
+    datasets.forEach(function(d,i){
+      if(this._hidden[i])return;
+      var v=d.data[hoverIdx];if(v==null)return;
+      var obj={dataset:d,raw:v,datasetIndex:i,dataIndex:hoverIdx,label:d.label||''};
+      var txt=tipCb?tipCb(obj):' '+(d.label||'')+': '+v;
+      if(txt)hlines.push(txt);
+    }.bind(this));
+    ctx.font='bold 11px Montserrat,sans-serif';ctx.textAlign='left';
+    var tw=0;hlines.forEach(function(l){tw=Math.max(tw,ctx.measureText(l).width);});
+    var th=hlines.length*16+14,tx=hx+10,ty=padT+8;
+    if(tx+tw+18>W)tx=hx-tw-26;
+    ctx.fillStyle='rgba(31,18,63,0.93)';ctx.beginPath();
+    if(ctx.roundRect)ctx.roundRect(tx,ty,tw+16,th,8);else ctx.rect(tx,ty,tw+16,th);
+    ctx.fill();
+    ctx.fillStyle='#EFE9FC';ctx.font='bold 11px Montserrat,sans-serif';ctx.fillText(hlines[0],tx+8,ty+14);
+    ctx.fillStyle='#DDD2F8';ctx.font='11px Montserrat,sans-serif';
+    hlines.slice(1).forEach(function(l,k){ctx.fillText(l,tx+8,ty+14+16*(k+1));});
+  }
+  // afterDraw plugins
+  this._plugins.forEach(function(p){if(p.afterDraw)p.afterDraw(this);}.bind(this));
+};
+root.Chart=TC;
+})(window);
+</script>
+  <style>
+    :root {
+      --m0:#FAF8FE;--m10:#EFE9FC;--m20:#DDD2F8;--m30:#C3AFF2;
+      --m60:#7145D6;--m80:#3B2A73;--m100:#1F123F;
+      --black:#1B1B25;--gray-dark:#5a5a5a;--gray-n60:#717182;
+      --gray-light:#e0e0e0;--white:#FFFFFF;
+      --green:#0C936B;--red:#E74A41;--orange:#EA8C2E;
+    }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Montserrat','Inter',system-ui,sans-serif;background:var(--m0);color:var(--black);min-height:100vh;}
+
+    .header{background:linear-gradient(135deg,var(--m100) 0%,var(--m80) 60%,var(--m60) 100%);padding:24px 40px 0;}
+    .header-top{display:flex;align-items:center;justify-content:space-between;padding-bottom:18px;}
+    .header-left{display:flex;align-items:center;gap:14px;}
+    .logo-mark{width:42px;height:42px;background:var(--m60);border-radius:9px;display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,0.25);}
+    .logo-mark svg{width:22px;height:22px;fill:white;}
+    .header-title h1{color:white;font-size:19px;font-weight:800;letter-spacing:-0.3px;}
+    .header-title p{color:var(--m20);font-size:11px;margin-top:2px;}
+
+    .country-tabs{display:flex;gap:0;overflow-x:auto;}
+    .readme-tab{color:rgba(255,255,255,0.5);font-size:12px;font-weight:700;padding:10px 18px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;transition:all 0.15s;user-select:none;margin-left:auto;}
+    .readme-tab:hover{color:rgba(255,255,255,0.85);}
+    .readme-tab.active{color:white;border-bottom-color:#EA8C2E;}
+    .readme-panel{display:none;padding:28px 32px;max-width:860px;margin:0 auto;}
+    .readme-panel.visible{display:block;}
+    .readme-section{background:white;border-radius:14px;padding:22px 26px;margin-bottom:18px;border:1px solid var(--m10);}
+    .readme-section h2{font-size:14px;font-weight:800;color:var(--m80);margin:0 0 4px;letter-spacing:.3px;}
+    .readme-section .tag{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:20px;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px;}
+    .readme-section p{font-size:13px;color:#444;line-height:1.65;margin:6px 0;}
+    .readme-section ul{font-size:13px;color:#444;line-height:1.7;margin:6px 0;padding-left:18px;}
+    .readme-badge{display:inline-block;font-size:11px;font-weight:700;border-radius:6px;padding:2px 8px;margin-right:4px;}
+    .country-tab{color:rgba(255,255,255,0.5);font-size:12px;font-weight:700;padding:10px 18px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;transition:all 0.15s;user-select:none;}
+    .country-tab:hover{color:rgba(255,255,255,0.85);}
+    .country-tab.active{color:white;border-bottom-color:white;}
+
+    .main{max-width:1040px;margin:0 auto;padding:24px 24px 60px;}
+
+    /* FY SUMMARY BLOCKS */
+    .fy-section{margin-bottom:20px;}
+    .fy-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+    .fy-label{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--gray-n60);}
+    .fy-toggle-all{font-size:11px;font-weight:600;color:var(--m60);cursor:pointer;user-select:none;padding:3px 8px;border-radius:10px;border:1px solid var(--m30);background:white;}
+    .fy-toggle-all:hover{background:var(--m10);}
+    .fy-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+    .fy-card{background:white;border-radius:11px;padding:14px 16px;border:1px solid var(--m10);cursor:pointer;transition:all 0.15s;user-select:none;position:relative;overflow:hidden;}
+    .fy-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;}
+    .fy-card.est::before{background:var(--m60);}
+    .fy-card.sim::before{background:var(--m60);opacity:0.5;}
+    .fy-card.tgt::before{background:var(--orange);}
+    .fy-card.hidden-card{opacity:0.4;background:var(--m0);}
+    .fy-card-label{font-size:9px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--gray-n60);margin-bottom:5px;}
+    .fy-card-value{font-size:20px;font-weight:800;color:var(--m80);letter-spacing:-0.4px;}
+    .fy-card-sub{font-size:10px;color:var(--gray-n60);margin-top:3px;}
+    .fy-badge{display:inline-flex;font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;margin-top:4px;}
+    .fy-badge.up{background:#e8f7f2;color:var(--green);}
+    .fy-badge.down{background:#fdecea;color:var(--red);}
+    .fy-eye{position:absolute;top:10px;right:10px;font-size:14px;opacity:0.4;}
+
+    /* METRIC PILLS */
+    .selector-section{margin-bottom:18px;}
+    .selector-label{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--gray-n60);margin-bottom:8px;}
+    .metric-pills{display:flex;flex-wrap:wrap;gap:7px;}
+    .metric-pill{background:white;border:1.5px solid var(--gray-light);color:var(--gray-dark);font-size:12px;font-weight:600;padding:7px 14px;border-radius:20px;cursor:pointer;transition:all 0.15s;white-space:nowrap;user-select:none;}
+    .metric-pill:hover{border-color:var(--m30);color:var(--m60);background:var(--m10);}
+    .metric-pill.active{background:var(--m60);border-color:var(--m60);color:white;box-shadow:0 3px 12px rgba(113,69,214,0.3);}
+
+    /* KPI STRIP */
+    .kpi-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px;}
+    .kpi-card{background:white;border-radius:12px;padding:15px 17px;border:1px solid var(--m10);position:relative;overflow:hidden;}
+    .kpi-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--m60);}
+    .kpi-card.green::before{background:var(--green);}
+    .kpi-card.red::before{background:var(--red);}
+    .kpi-card.orange::before{background:var(--orange);}
+    .kpi-label{font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--gray-n60);margin-bottom:5px;}
+    .kpi-value{font-size:22px;font-weight:800;color:var(--m80);letter-spacing:-0.4px;line-height:1;}
+    .kpi-sub{font-size:11px;color:var(--gray-n60);margin-top:3px;}
+    .kpi-badge{display:inline-flex;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;margin-top:5px;}
+    .kpi-badge.up{background:#e8f7f2;color:var(--green);}
+    .kpi-badge.down{background:#fdecea;color:var(--red);}
+
+    /* CHART */
+    .chart-card{background:white;border-radius:14px;padding:22px 22px 18px;border:1px solid var(--m10);box-shadow:0 2px 16px rgba(113,69,214,0.06);}
+    .chart-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px;gap:12px;flex-wrap:wrap;}
+    .chart-title{font-size:16px;font-weight:800;color:var(--m100);}
+    .chart-legend{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+    .legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--gray-dark);font-weight:600;cursor:pointer;user-select:none;transition:opacity 0.15s;}
+    .legend-item.hidden{opacity:0.3;text-decoration:line-through;}
+    .legend-line{width:20px;height:2px;border-radius:2px;flex-shrink:0;}
+    .chart-area{position:relative;height:280px;}
+    .note{background:var(--m10);border-left:3px solid var(--m60);padding:8px 12px;border-radius:0 6px 6px 0;font-size:10px;color:var(--m80);margin-top:12px;}
+
+
+    /* SCENARIO H1/H2 STRIP */
+    .scenario-section{margin-bottom:18px;}
+    .scenario-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+    .scenario-card{background:white;border-radius:11px;padding:12px 14px;border:1px solid var(--m10);position:relative;overflow:hidden;}
+    .scenario-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;}
+    .scenario-card.sc-actuals::before{background:#1F123F;}
+    .scenario-card.sc-tendencia::before{background:#3B2A73;}
+    .scenario-card.sc-sim::before{background:#7145D6;}
+    .scenario-card.sc-tgt::before{background:#EA8C2E;}
+    .sc-label{font-size:9px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--gray-n60);margin-bottom:6px;}
+    .sc-row{display:flex;gap:6px;align-items:flex-end;margin-bottom:3px;}
+    .sc-half{flex:1;}
+    .sc-half-label{font-size:8px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:var(--gray-n60);margin-bottom:1px;}
+    .sc-half-value{font-size:14px;font-weight:800;color:var(--m80);letter-spacing:-0.3px;line-height:1;}
+    .sc-divider{width:1px;background:var(--gray-light);align-self:stretch;margin-bottom:2px;}
+    .sc-badge{font-size:9px;font-weight:700;padding:2px 6px;border-radius:5px;margin-top:3px;display:inline-flex;}
+    .sc-badge.up{background:#e8f7f2;color:var(--green);}
+    .sc-badge.down{background:#fdecea;color:var(--red);}
+
+    @media(max-width:640px){
+      .kpi-strip,.fy-strip{grid-template-columns:1fr 1fr;}
+      .header-top{flex-direction:column;align-items:flex-start;}
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-top">
+    <div class="header-left">
+      <div class="logo-mark">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/></svg>
+      </div>
+      <div class="header-title">
+        <h1>Business Plan H2 2026</h1>
+        <p>Simulación B2C · Target original · Estimación tendencia</p>
+      </div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:stretch;">
+    <div class="country-tabs" id="countryTabs"></div>
+    <div class="readme-tab" id="readmeTab" onclick="toggleReadme()">ℹ️ Guía</div>
+  </div>
+</div>
+
+<div class="readme-panel" id="readmePanel">
+  <div class="readme-section">
+    <h2>📊 Business Plan H2 2026 — Guía de escenarios</h2>
+    <p>Este dashboard consolida los datos reales YTD (Ene–May 2026) y proyecta tres escenarios para el resto del año. Última actualización de actuals: <strong>Mayo 2026</strong>. Forecast de referencia: <strong>Q2 2026</strong>.</p>
+  </div>
+
+  <div class="readme-section">
+    <h2>🟠 Target — Forecast oficial Q2</h2>
+    <span class="tag" style="background:#FFF3E0;color:#E65100;">Referencia oficial</span>
+    <p>Es el <strong>último forecast oficial aprobado (Q2 2026)</strong>. Representa el compromiso del equipo con la organización. Los valores de H2 son los targets mensuales del plan.</p>
+    <ul>
+      <li>Fuente: BP oficial Q2 2026.</li>
+      <li>No cambia salvo nueva revisión formal del forecast.</li>
+      <li>El badge <em>vs Target</em> en los KPIs mide el gap acumulado entre actuals y este plan.</li>
+    </ul>
+  </div>
+
+  <div class="readme-section">
+    <h2>🟣 Simulación B2C — Estimación del equipo</h2>
+    <span class="tag" style="background:#F3EFFE;color:#5B21B6;">Estimación interna</span>
+    <p>Escenario construido por el <strong>equipo de B2C</strong> como alternativa al target oficial. Refleja hipótesis propias del equipo sobre la evolución del negocio, distintas a las del forecast Q2.</p>
+    <ul>
+      <li>No es un compromiso formal; es una visión interna de trabajo.</li>
+      <li>Útil para comparar gap entre lo que el equipo anticipa y el plan oficial.</li>
+      <li>Se puede ocultar/mostrar haciendo click en su tarjeta.</li>
+    </ul>
+  </div>
+
+  <div class="readme-section">
+    <h2>⬛ Tendencia H2 — Proyección estadística YTD</h2>
+    <span class="tag" style="background:#F5F5F5;color:#333;">Proyección automática</span>
+    <p>Proyección calculada automáticamente en base a los actuals acumulados. La lógica es: <strong>tgt[mes] × (actuals_YTD / target_YTD)</strong>, usando solo los meses donde existen tanto actuals como target.</p>
+    <p>Esto significa que si el acumulado YTD va un 5% por debajo del plan, la tendencia proyecta el resto del año también un 5% por debajo del target (manteniendo la estacionalidad del plan).</p>
+    <ul>
+      <li>Se actualiza automáticamente al añadir nuevos meses de actuals.</li>
+      <li>El YoY medio de actuals se usa como fallback si no hay target disponible.</li>
+      <li>No es una estimación del equipo — es un espejo del ritmo actual.</li>
+    </ul>
+  </div>
+
+  <div class="readme-section">
+    <h2>📐 Métricas y convenciones</h2>
+    <ul>
+      <li><strong>GMV B2C / DOs B2C / NCC</strong>: métricas de flujo → KPI YTD muestra la <em>suma acumulada</em>. H2/FY también es suma.</li>
+      <li><strong>Active Users, AU RAM, Active Drivers, Avg Ticket, Do/User, DO/Driver</strong>: métricas de stock o ratio → KPI YTD muestra la <em>media mensual</em>.</li>
+      <li><strong>DOs B2C</strong> = DOs Private + DOs Asset Sharing (excluye Corporate).</li>
+      <li><strong>DO/Driver</strong> = DOs Totales (Private + Corporate + Asset Sharing) / Active Drivers.</li>
+      <li><strong>AU RAM</strong>: usuarios activos según modelo RAM (base activa). Distinto de Active Users B2C.</li>
+      <li>Los datos de Churn Ene-2025 son N/D en la fuente (CSV del modelo RAM).</li>
+      <li>Los FX rates aplicados son los del BP original por país.</li>
+    </ul>
+  </div>
+
+  <div class="readme-section">
+    <h2>🔄 Cómo actualizar los datos</h2>
+    <ul>
+      <li>Los actuals se actualizan mensualmente editando los arrays <code>a26</code> en <code>ALL_DATA</code> y <code>AU_RAM_DATA</code> dentro del HTML.</li>
+      <li>El índice 0 = Enero, 4 = Mayo, 11 = Diciembre.</li>
+      <li>Cuando se añade un actual para el mes N, poner <code>sim[N] = null</code> para ese mes.</li>
+      <li>La tendencia se recalcula automáticamente.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="metric-selector-bar" id="metricSelectorBar" style="background:white;border-bottom:1px solid var(--m10);padding:10px 24px;">
+  <div class="metric-pills" id="metricPills"></div>
+</div>
+
+<div class="main" id="mainContent">
+
+  <!-- FY SUMMARY -->
+  <div class="fy-section" id="fySection">
+    <div class="fy-header">
+      <div class="fy-label">Full Year 2026 — Resumen anual</div>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <div class="fy-toggle-all" id="fyToggleAll">Ocultar todo</div>
+        <div class="fy-toggle-all" id="fyToggleBlock" onclick="toggleFyBlock()">Ocultar bloque</div>
+      </div>
+    </div>
+    <div id="fyBody">
+    <div class="fy-strip" id="fyStrip"></div>
+    </div>
+  </div>
+
+
+  <!-- SCENARIO H1/H2 STRIP -->
+  <div class="scenario-section" id="scenarioSection">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <div class="selector-label">Escenarios H1 · H2 · FY</div>
+      <div style="display:flex;gap:6px;">
+        <button id="scToggleH1" onclick="toggleScHalf('h1')" style="font-size:10px;padding:3px 10px;border-radius:20px;border:1px solid var(--m30);background:var(--m10);color:var(--m80);cursor:pointer;font-weight:600;">Ocultar H1</button>
+        <button id="scToggleH2" onclick="toggleScHalf('h2')" style="font-size:10px;padding:3px 10px;border-radius:20px;border:1px solid var(--m30);background:var(--m10);color:var(--m80);cursor:pointer;font-weight:600;">Ocultar H2</button>
+        <div class="fy-toggle-all" id="scToggleAll" onclick="toggleScAll()">Ocultar bloque</div>
+      </div>
+    </div>
+    <div id="scenarioBody">
+    <div class="scenario-strip" id="scenarioStrip"></div>
+    </div>
+  </div>
+
+
+  <!-- PER-COUNTRY INSIGHTS -->
+
+  <!-- KPI STRIP -->
+  <div class="kpi-strip" id="kpiStrip"></div>
+
+  <!-- RAM H2 INLINE (solo AU RAM, se clona desde ramH2Card) -->
+  <div id="ramH2Inline" style="display:none;margin-top:14px;"></div>
+
+  <!-- CHART -->
+  <div class="chart-card" id="mainChartCard">
+    <div class="chart-header">
+      <div class="chart-title" id="chartTitle">GMV B2C</div>
+      <div class="chart-legend" id="chartLegend">
+        <div class="legend-item" data-label="Actuals 2025"><div class="legend-line" style="background:#C3AFF2;"></div>Actuals 2025</div>
+        <div class="legend-item" data-label="Actuals 2026"><div class="legend-line" style="background:#1F123F;"></div>Actuals 2026</div>
+
+        <div class="legend-item" data-label="Simulación B2C"><div class="legend-line" style="border-top:2px dashed #7145D6;height:0;"></div>Simulación B2C</div>
+        <div class="legend-item" data-label="Target"><div class="legend-line" style="border-top:2px dashed #EA8C2E;height:0;"></div>Target</div>
+        <div class="legend-item" data-label="Δ vs 2025"><div class="legend-line" style="background:rgba(160,160,160,0.5);height:8px;border-radius:2px;"></div>Δ vs 2025</div>
+      </div>
+    </div>
+    <div class="chart-area"><canvas id="mainChart"></canvas></div>
+    <div class="note">Barras grises = Δ absoluto vs 2025 (eje derecho). Líneas discontinuas = proyección. Valores May–Dic 2026 en simulación/target.</div>
+  </div>
+
+  <!-- AU RAM BREAKDOWN -->
+  <div class="chart-card" style="margin-top:18px;" id="ramBreakdownCard">
+    <div class="chart-header">
+      <div>
+        <div class="chart-title">AU RAM · Desglose de usuarios</div>
+        <div style="font-size:11px;color:var(--gray-n60);margin-top:3px;">New · Reactivated · Recurrent · Churn — comparativa YoY Ene–Abr</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="chart-legend" id="ramLegend">
+          <div class="legend-item" data-rl="new"><div class="legend-line" style="background:#0C936B;height:10px;border-radius:2px;"></div>New</div>
+          <div class="legend-item" data-rl="react"><div class="legend-line" style="background:#7145D6;height:10px;border-radius:2px;"></div>Reactivated</div>
+          <div class="legend-item" data-rl="recur"><div class="legend-line" style="background:#C3AFF2;height:10px;border-radius:2px;"></div>Recurrent</div>
+          <div class="legend-item" data-rl="churn"><div class="legend-line" style="background:#E74A41;height:10px;border-radius:2px;"></div>Churn</div>
+        </div>
+        <div id="ramBreakdownToggle" class="fy-toggle-all" style="cursor:pointer;" onclick="toggleRamBreakdown()">Ocultar</div>
+      </div>
+    </div>
+    <div class="chart-area" style="height:280px;padding-top:30px;"><canvas id="ramChart"></canvas></div>
+    <div class="note">Barras agrupadas por mes: izquierda = 2025 · derecha = 2026 actuals (Ene–May). Churn en negativo. Total encima de cada barra · YoY% sobre las barras de 2026. <strong>Churn Ene-25 = N/D</strong> en la fuente (RAM model CSV no incluía ese dato).</div>
+  </div>
+
+
+  <!-- RAM H2 TARGETS -->
+  <div style="margin-top:14px;display:none;" id="ramH2Card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--gray-n60);">Objetivos H2 · Componentes RAM (Jul–Dic)</div>
+      <div id="ramH2Toggle" class="fy-toggle-all" style="cursor:pointer;" onclick="toggleRamH2()">Ocultar</div>
+    </div>
+    <div id="ramH2Body">
+    <div id="ramH2Strip" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>
+    </div>
+  </div>
+
+  <!-- RAM COMPONENT CHART -->
+  <div class="chart-card" style="margin-top:18px;display:none;" id="ramCompCard">
+    <div class="chart-header" style="flex-wrap:wrap;gap:8px;">
+      <div style="display:flex;align-items:center;gap:10px;flex:1;flex-wrap:wrap;">
+        <div>
+          <div class="chart-title" id="ramCompTitle">New users · Evolución mensual</div>
+          <div style="font-size:11px;color:var(--gray-n60);margin-top:2px;">Actuals 2025 · 2026</div>
+        </div>
+        <!-- Metric pills -->
+        <div style="display:flex;gap:5px;flex-wrap:wrap;" id="ramCompPills">
+          <button class="metric-pill active" data-comp="New">New</button>
+          <button class="metric-pill" data-comp="Reactivated">Reactivated</button>
+          <button class="metric-pill" data-comp="Recurrent">Recurrent</button>
+          <button class="metric-pill" data-comp="Churn">Churn</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+        <!-- Scenario legend (clickable) -->
+        <div id="ramCompLegend" class="chart-legend" style="gap:10px;">
+          <div class="legend-item" data-rscen="a25"><div class="legend-line" style="background:#C3AFF2;"></div>2025</div>
+          <div class="legend-item" data-rscen="a26"><div class="legend-line" style="background:#1F123F;"></div>2026</div>
+        </div>
+        <!-- Collapse button -->
+        <div id="ramCompToggle" class="fy-toggle-all" style="cursor:pointer;" onclick="toggleRamComp()">Ocultar</div>
+      </div>
+    </div>
+    <div class="chart-area" style="height:260px;margin-top:14px;"><canvas id="ramCompChart"></canvas></div>
+
+  </div>
+
+  <!-- INVESTMENT CARD -->
+  <div id="investmentCard" style="display:none;margin-top:4px;">
+    <div class="chart-card">
+      <div class="chart-header">
+        <div class="chart-title">Inversión Rider · Actuals 2026</div>
+        <div style="font-size:11px;color:var(--gray-n60);margin-top:3px;">Brand · Acquisition · Engagement · Descuentos — Q1 / Q2 (Abr–May) / YTD (Ene–May)</div>
+      </div>
+      <div id="invTableWrap" style="margin-top:12px;overflow-x:auto;"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const MONTHS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+const METRICS_CFG = {
+  'GMV B2C':        {unit:'€',scale:1e6,decimals:1,suffix:'M',isPct:false},
+  'DOs (DO B2C)':   {unit:'', scale:1e6,decimals:2,suffix:'M',isPct:false},
+  'Avg Ticket':     {unit:'$',scale:1,  decimals:2,suffix:'', isPct:false},
+  'NCC':            {unit:'€',scale:1e6,decimals:1,suffix:'M',isPct:false},
+  'Active Users':   {unit:'', scale:1e6,decimals:2,suffix:'M',isPct:false},
+  'AU RAM':         {unit:'', scale:1e6,decimals:2,suffix:'M',isPct:false},
+  'Do/User':        {unit:'', scale:1,  decimals:2,suffix:'', isPct:false},
+  'Active Drivers': {unit:'', scale:1e3,decimals:1,suffix:'K',isPct:false},
+  'DO/Driver':      {unit:'', scale:1,  decimals:1,suffix:'', isPct:false},
+  'Investment':      {unit:'€',scale:1,  decimals:0,suffix:'', isPct:false,isInvestment:true},
+};
+
+// % badge metrics (show YoY % in KPI badges instead of absolute)
+const PCT_BADGE_METRICS = new Set(['GMV B2C','DOs (DO B2C)','Avg Ticket','NCC','Active Users','AU RAM','Active Drivers']);
+
+const ALL_DATA = {
+ "ALL COUNTRIES": {
+  "GMV B2C": {a25:[51386637,51938230,65173420,59461184,65618053,66972302,64886152,58483280,64162276,65628876,67384599,73717813],a26:[55413164,55231479,64937771,65046842,70117424,null,null,null,null,null,null,null],sim:[null,null,null,null,null,79065727,77248846,69810545,79050002,80881807,80892120,85900180],tgt:[56086506,55454267,70179680,69681639,75508608,79065727,77248846,69810545,79050002,80881807,80892120,85900180]},
+  "DOs (DO B2C)": {a25:[6331502,6227097,7192317,6749791,7233106,7014343,7311793,6981571,7208366,7510109,7435462,7529076],a26:[6463932,6298593,7217043,6952809,7287021,null,null,null,null,null,null,null],sim:[null,null,null,null,null,7308544,7819867,7610833,7955103,8389444,8311520,8455098],tgt:[6498372,6468128,7637229,7491525,7960649,7994506,8280405,8024751,8403951,8741126,8719410,8792164]},
+  "Avg Ticket": {a25:[8.116,8.3407,9.0615,8.8093,9.0719,9.5479,8.8742,8.3768,8.9011,8.7387,9.0626,9.7911],a26:[8.5727,8.7689,8.9978,9.3555,9.6222,null,null,null,null,null,null,null],sim:[null,null,null,null,null,10.8183,9.8785,9.1725,9.937,9.6409,9.7325,10.1596],tgt:[8.6309,8.5735,9.1892,9.3014,9.4852,9.89,9.3291,8.6994,9.4063,9.253,9.2772,9.7701]},
+  "NCC": {a25:[4871547,4343889,6179360,5341430,5905945,6255404,5506580,5163345,6203907,5656916,6009555,7315872],a26:[4528675,3837873,5242178,4455294,5674153,null,null,null,null,null,null,null],sim:[null,null,null,null,null,6994789,7171639,6187761,7109810,7681693,7378893,9232497],tgt:[4295058,3604724,5915698,4871291,5928054,6994789,7171639,6187761,7109810,7681693,7378893,9232497]},
+  "Active Users": {a25:[2007055,2002367,2233761,2112529,2232232,2238753,2235713,2116430,2221600,2302260,2341479,2474281],a26:[2044705,2025246,2218361,2146439,2293200,null,null,null,null,null,null,null],sim:[null,null,null,null,null,2279930,2327378,2224347,2366036,2465333,2506059,2659319],tgt:[2036606,2025330,2334936,2291974,2382649,2465895,2473051,2363091,2502679,2577587,2623651,2722542]},
+  "AU RAM": {a25:[4314826,4234849,4136735,4158391,4201228,4239312,4287426,4252871,4255675,4289518,4381416,4492463],a26:[4346328,4280616,4171749,4227071,4045326,null,null,null,null,null,null,null],sim:[null,null,null,null,null,4290587,4537824,4499345,4506435,4544665,4640879,4759993],tgt:[null,null,null,null,4249065,4290587,4537824,4499345,4506435,4544665,4640879,4759993]},
+  "Do/User": {a25:[3.1546,3.1099,3.2198,3.1951,3.2403,3.1331,3.2705,3.2987,3.2447,3.2621,3.1755,3.0429],a26:[3.1613,3.11,3.2533,3.2392,3.1777,null,null,null,null,null,null,null],sim:[null,null,null,null,null,3.2056,3.3599,3.4216,3.3622,3.403,3.3166,3.1794],tgt:[3.1908,3.1936,3.2709,3.2686,3.3411,3.242,3.3483,3.3959,3.358,3.3912,3.3234,3.2294]},
+  "Active Drivers": {a25:[96508,95044,99345,100167,101499,100630,102211,104260,105367,108859,106337,105291],a26:[104150,103378,108120,108037,108052,null,null,null,null,null,null,null],sim:[null,null,null,null,null,107000,110000,113000,113000,118000,115000,111000],tgt:[102546,101189,105401,107665,108956,107612,108155,109871,110299,110683,110859,111245]},
+  "DO/Driver": {a25:[65.606,65.518,72.3974,67.3854,71.2628,69.7043,71.5363,66.9631,68.412,68.9893,69.9236,71.5073],a26:[62.0637,60.9278,66.7503,64.3558,77.3698,null,null,null,null,null,null,null],sim:[null,null,null,null,null,68.3041,71.0897,67.3525,70.3991,71.097,72.2741,76.1721],tgt:[63.3703,63.9213,72.4588,69.5818,73.063,74.2901,76.5605,73.0379,76.1924,78.9744,78.6532,79.0342]},
+ },
+ "AR": {
+  "GMV B2C": {a25:[15189851,16012393,19816950,17679048,18773498,17930019,18865685,16329987,16329987,17242760,18624627,21313664],a26:[13926170,15450975,18507352,18828088,18916324,null,null,null,null,null,null,null],sim:[null,null,null,null,null,18323914,19892347,19438856,18840367,19913332,20699215,21757756],tgt:[14346620,14927126,18157720,17937241,18642788,18323914,19892347,19438856,18840367,19913332,20699215,21757756]},
+  "DOs (DO B2C)": {a25:[2181109,2207545,2535916,2469032,2638843,2589460,2833245,2699825,2699825,2853608,2868755,2937106],a26:[2430487,2452295,2798708,2682452,2715328,null,null,null,null,null,null,null],sim:[null,null,null,null,null,2845832,3153574,3002828,3001485,3176051,3195402,3271441],tgt:[2474298,2479345,2823963,2820745,2936531,2930721,3131278,3157533,3056966,3222837,3223477,3261045]},
+  "Avg Ticket": {a25:[6.9643,7.2535,7.8145,7.1603,7.1143,6.9242,6.6587,6.0485,6.0485,6.0424,6.4922,7.2567],a26:[5.7298,6.3006,6.6128,7.019,6.9665,null,null,null,null,null,null,null],sim:[null,null,null,null,null,6.4389,6.3079,6.4735,6.277,6.2698,6.4778,6.6508],tgt:[5.7983,6.0206,6.4299,6.359,6.3486,6.2524,6.3528,6.1563,6.1631,6.1788,6.4214,6.672]},
+  "NCC": {a25:[1534208,2070564,2509191,2141596,2399890,2069947,2425514,2264105,2264105,2267567,2610521,2726808],a26:[1633196,1921702,2479889,2383024,2408218,null,null,null,null,null,null,null],sim:[null,null,null,null,null,2297211,2569222,2695628,2561182,2596878,2788985,2862838],tgt:[1700718,1852521,2555397,2324936,2366112,2297211,2569222,2695628,2561182,2596878,2788985,2862838]},
+  "Active Users": {a25:[675102,694715,767930,735414,763799,761349,816912,764595,764595,811106,848889,905797],a26:[712707,743293,798394,764521,816525,null,null,null,null,null,null,null],sim:[null,null,null,null,null,805000,874000,818000,817000,868000,909000,970000],tgt:[720770,732561,836160,789315,797521,825191,870917,867818,840330,891112,928734,985529]},
+  "AU RAM": {a25:[1323398,1318664,1307314,1316527,1320698,1317656,1348032,1358338,1354846,1353405,1395782,1465706],a26:[1423934,1405462,1368002,1381243,1369914,null,null,null,null,null,null,null],sim:[null,null,null,null,null,1458743,1509508,1519082,1516716,1519058,1567828,1643320],tgt:[null,null,null,null,null,null,1509508,1519082,1516716,1519058,1567828,1643320]},
+  "Do/User": {a25:[3.2308,3.1776,3.3023,3.3573,3.4549,3.4011,3.4682,3.5311,3.5311,3.5182,3.3794,3.2426],a26:[3.4102,3.2992,3.5054,3.5087,3.3255,null,null,null,null,null,null,null],sim:[null,null,null,null,null,3.5352,3.6082,3.6709,3.6738,3.659,3.5153,3.3726],tgt:[3.4329,3.3845,3.3773,3.5737,3.6821,3.5516,3.5954,3.6385,3.6378,3.6166,3.4708,3.3089]},
+  "Active Drivers": {a25:[26447,26216,28392,29903,30615,29861,30867,32960,32960,33973,32685,30898],a26:[31807,30466,32282,31830,31834,null,null,null,null,null,null,null],sim:[null,null,null,null,null,33000,34000,37000,36000,37000,36000,34000],tgt:[29838,29642,31916,33368,33554,32152,32720,34270,33844,32525,32708,34124]},
+  "DO/Driver": {a25:[82.4709,84.206,89.318,82.568,86.1944,86.7171,91.7888,81.9122,81.9122,83.9964,87.7698,95.0581],a26:[76.4136,80.4928,86.6956,84.2743,92.8874,null,null,null,null,null,null,null],sim:[null,null,null,null,null,86.2373,92.7522,81.1575,83.3746,85.8392,88.7612,96.2189],tgt:[82.9244,83.643,88.4811,84.5344,87.5166,91.1521,95.6992,92.1369,90.3252,99.088,98.5532,95.5646]},
+ },
+ "CL": {
+  "GMV B2C": {a25:[4289742,3588836,5270275,4752167,5208584,4709560,4972304,5260359,4972583,5421978,5698192,6215369],a26:[5115869,4268913,5801051,5872528,5720091,null,null,null,null,null,null,null],sim:[null,null,null,null,null,5684011,6105837,6268422,6141741,6661533,6438373,6743969],tgt:[4843628,4176533,5875350,5493372,5879190,5684011,6105837,6268422,6141741,6661533,6438373,6743969]},
+  "DOs (DO B2C)": {a25:[683730,534153,726725,692606,744167,706945,776384,801009,743187,828174,811985,840021],a26:[762230,594837,790608,739132,753435,null,null,null,null,null,null,null],sim:[null,null,null,null,null,850795,935546,921085,877707,982097,957307,954092],tgt:[721796,613539,862378,809579,870333,850795,935546,921085,877707,982097,957307,954092]},
+  "Avg Ticket": {a25:[6.274,6.7187,7.2521,6.8613,6.9992,6.6618,6.4044,6.5672,6.6909,6.5469,7.0176,7.3991],a26:[6.7117,7.1766,7.3375,7.9452,7.592,null,null,null,null,null,null,null],sim:[null,null,null,null,null,7.5086,7.0916,7.0511,7.4445,7.2487,7.1458,7.236],tgt:[6.7105,6.8073,6.813,6.7855,6.7551,6.6808,6.5265,6.8055,6.9975,6.783,6.7255,7.0685]},
+  "NCC": {a25:[593964,450778,824110,407874,452191,501406,335867,505647,514814,515963,477252,543862],a26:[459671,379604,365445,305997,388941,null,null,null,null,null,null,null],sim:[null,null,null,null,null,625129,662336,641578,687594,701818,644093,744308],tgt:[388141,306223,361872,305863,388057,625129,662336,641578,687594,701818,644093,744308]},
+  "Active Users": {a25:[211579,183431,222037,212319,225119,214465,223012,234891,232322,245973,249592,258980],a26:[224170,190075,228634,219084,240171,null,null,null,null,null,null,null],sim:[null,null,null,null,null,218000,233000,246000,243000,258000,261000,271000],tgt:[212374,200149,249719,233429,252264,246216,251112,253035,256173,273586,265550,274929]},
+  "AU RAM": {a25:[429473,408149,402572,401181,407007,404851,406257,410589,418329,427872,437362,448035],a26:[437145,416906,407676,404686,379043,null,null,null,null,null,null,null],sim:[null,null,null,null,null,410721,425129,429821,437839,447950,457757,468984],tgt:[null,null,null,null,413250,410721,425129,429821,437839,447950,457757,468984]},
+  "Do/User": {a25:[3.2316,2.912,3.273,3.2621,3.3057,3.2963,3.4814,3.4101,3.199,3.3669,3.2532,3.2436],a26:[3.4002,3.1295,3.458,3.3737,3.1371,null,null,null,null,null,null,null],sim:[null,null,null,null,null,3.4725,3.6953,3.6138,3.3951,3.562,3.4521,3.4391],tgt:[3.3987,3.0654,3.4534,3.4682,3.4501,3.4555,3.7256,3.6401,3.4262,3.5897,3.605,3.4703]},
+  "Active Drivers": {a25:[12911,11024,12581,12377,12964,13106,13146,13011,12254,13159,12829,12994],a26:[13324,11757,13370,13169,13170,null,null,null,null,null,null,null],sim:[null,null,null,null,null,14000,14000,14000,13000,14000,14000,14000],tgt:[13105,11877,13383,13879,14541,14719,14816,14933,14591,15568,15549,15749]},
+  "DO/Driver": {a25:[52.9572,48.4536,57.7637,55.9591,57.4026,53.9406,59.0586,61.564,60.6485,62.9359,63.2929,64.6468],a26:[57.2073,50.5943,59.133,56.1267,67.5782,null,null,null,null,null,null,null],sim:[null,null,null,null,null,54.0714,61.5,63.5,63.4615,65.6429,64.3571,66.5714],tgt:[55.0779,51.6577,64.4383,58.3312,59.8537,57.8025,63.1443,61.6812,60.154,63.0843,61.5671,60.5811]},
+ },
+ "CO": {
+  "GMV B2C": {a25:[4346085,5528988,5592491,4531395,5083437,4502077,4918770,4858630,5018973,5392194,5619155,5569343],a26:[3693777,4657746,5000574,4823218,4836487,null,null,null,null,null,null,null],sim:[null,null,null,null,null,4567962,4961612,5249430,5737030,6219992,6504531,7029576],tgt:[3682721,4438681,4727881,4328740,4863017,4567962,4961612,5249430,5737030,6219992,6504531,7029576]},
+  "DOs (DO B2C)": {a25:[975923,1081011,1027103,872128,957179,833436,913763,884221,898883,940717,926861,832771],a26:[617100,735739,793153,765215,782984,null,null,null,null,null,null,null],sim:[null,null,null,null,null,697000,853745,884264,980439,1041465,1061555,1039402],tgt:[646697,780262,788329,712239,797683,750368,853745,884264,980439,1041465,1061555,1039402]},
+  "Avg Ticket": {a25:[4.4533,5.1146,5.4449,5.1958,5.3109,5.4018,5.383,5.4948,5.5836,5.732,6.0626,6.6877],a26:[5.9857,6.3307,6.3047,6.3031,6.177,null,null,null,null,null,null,null],sim:[null,null,null,null,null,6.5537,5.8116,5.9365,5.8515,5.9723,6.1274,6.7631],tgt:[5.6947,5.6887,5.9973,6.0777,6.0964,6.0876,5.8116,5.9365,5.8515,5.9723,6.1274,6.7631]},
+  "NCC": {a25:[398823,578171,695211,411879,366444,367299,406876,380052,548625,436660,425070,538069],a26:[293294,482622,422718,319812,375599,null,null,null,null,null,null,null],sim:[null,null,null,null,null,322409,400870,460076,520563,632838,682473,836199],tgt:[282072,454985,459114,310939,420151,322409,400870,460076,520563,632838,682473,836199]},
+  "Active Users": {a25:[244673,270385,252385,226092,250282,232619,229319,233596,237894,264922,271381,267127],a26:[192914,216733,225981,218624,258189,null,null,null,null,null,null,null],sim:[null,null,null,null,null,211000,233903,238990,258010,274070,286907,305706],tgt:[191898,194579,200593,213886,221579,214391,233903,238990,258010,274070,286907,305706]},
+  "AU RAM": {a25:[591483,570164,519868,500934,493133,488645,488583,478822,481737,506964,527459,533147],a26:[494586,485021,468239,478320,418930,null,null,null,null,null,null,null],sim:[null,null,null,null,null,443893,454907,446922,451033,480631,495809,498464],tgt:[null,null,null,null,444675,443893,454907,446922,451033,480631,495809,498464]},
+  "Do/User": {a25:[3.9887,3.998,4.0696,3.8574,3.8244,3.5828,3.9847,3.7853,3.7785,3.5509,3.4153,3.1175],a26:[3.1988,3.3947,3.5098,3.5001,3.0326,null,null,null,null,null,null,null],sim:[null,null,null,null,null,3.3033,3.65,3.7,3.8,3.8,3.7,3.4],tgt:[3.37,4.01,3.93,3.33,3.6,3.5,3.65,3.7,3.8,3.8,3.7,3.4]},
+  "Active Drivers": {a25:[29873,30937,30138,29448,29595,28944,29247,28813,29646,30917,29974,30745],a26:[29645,31519,31216,31645,31647,null,null,null,null,null,null,null],sim:[null,null,null,null,null,29000,31000,31000,31000,33000,32000,31000],tgt:[29715,29808,29444,29293,29119,28495,28094,28176,28451,28612,28099,26831]},
+  "DO/Driver": {a25:[32.6691,34.9423,34.08,29.6159,32.3426,28.7948,31.243,30.6883,30.3205,30.4272,30.9222,27.0864],a26:[20.8163,23.3427,25.4085,24.1812,34.4684,null,null,null,null,null,null,null],sim:[null,null,null,null,null,24.0345,25.129,26.0323,27.2903,28.9091,29.5,27.2581],tgt:[21.7633,26.1763,26.7738,24.3143,27.3939,26.3333,30.3889,31.3836,34.4606,36.3996,37.7791,38.7388]},
+ },
+ "ES": {
+  "GMV B2C": {a25:[21783358,20809837,27549073,25770748,29383848,32494639,28581129,24400941,30104084,29314269,28164583,30493432],a26:[24812192,22771021,27115889,27423140,31813598,null,null,null,null,null,null,null],sim:[null,null,null,null,null,41690889,37300843,30013759,39151999,38571866,37479440,39827985],tgt:[26118301,24532145,33062885,33863839,37445413,41690889,37300843,30013759,39151999,38571866,37479440,39827985]},
+  "DOs (DO B2C)": {a25:[1394008,1287639,1635927,1482021,1606673,1619251,1493955,1304835,1540019,1519859,1424552,1534245],a26:[1391572,1276459,1524687,1493064,1640383,null,null,null,null,null,null,null],sim:[null,null,null,null,null,1642691,1577332,1463058,1799593,1803723,1691122,1835344],tgt:[1430715,1335372,1764878,1796303,1927052,2028812,1912762,1599914,1988589,1965931,1917235,1966878]},
+  "Avg Ticket": {a25:[15.6264,16.1612,16.84,17.3889,18.2886,20.0677,19.1312,18.7004,19.5479,19.2875,19.7708,19.8752],a26:[17.8303,17.8392,17.7846,18.367,19.394,null,null,null,null,null,null,null],sim:[null,null,null,null,null,25.3796,23.6481,20.5144,21.756,21.3846,22.1625,21.7006],tgt:[18.2554,18.371,18.7338,18.852,19.4314,20.5494,19.501,18.7596,19.6883,19.6202,19.5487,20.2493]},
+  "NCC": {a25:[1661234,536847,1398372,1762465,1980993,2701211,1682706,1317952,2164463,1687379,1568894,2516241],a26:[1433607,318255,1217206,872898,1712061,null,null,null,null,null,null,null],sim:[null,null,null,null,null,3087628,2858443,1663513,2512610,2941803,2459949,3871652],tgt:[1391307,444436,1811440,1325208,2101971,3087628,2858443,1663513,2512610,2941803,2459949,3871652]},
+  "Active Users": {a25:[641820,609101,733770,684796,734355,769133,702530,621772,722323,707918,684338,748247],a26:[646150,602586,698990,678945,690522,null,null,null,null,null,null,null],sim:[null,null,null,null,null,765000,713000,652000,789000,785000,759000,837000],tgt:[653952,626412,768473,777202,822216,885856,820696,706138,848560,832581,826341,830851]},
+  "AU RAM": {a25:[1452467,1425314,1406565,1431554,1470308,1512827,1528277,1485790,1477343,1471580,1473192,1485518],a26:[1438631,1418703,1387713,1414231,1443641,null,null,null,null,null,null,null],sim:[null,null,null,null,null,1504634,1551509,1556967,1613414,1632174,1634452,1660798],tgt:[null,null,null,null,1482514,1504634,1551509,1556967,1613414,1632174,1634452,1660798]},
+  "Do/User": {a25:[2.172,2.114,2.2295,2.1642,2.2008,2.1053,2.1265,2.0986,2.132,2.1469,2.0816,2.0505],a26:[2.1536,2.1183,2.1813,2.1991,2.1793,null,null,null,null,null,null,null],sim:[null,null,null,null,null,2.1473,2.2122,2.244,2.2809,2.2977,2.2281,2.1928],tgt:[2.1878,2.1318,2.2966,2.3112,2.3437,2.2902,2.3307,2.2657,2.3435,2.3612,2.3201,2.3673]},
+  "Active Drivers": {a25:[8560,8608,9025,8939,8951,8787,9005,8623,9197,9345,9259,9229],a26:[9086,9450,10036,9940,9953,null,null,null,null,null,null,null],sim:[null,null,null,null,null,9000,10000,9000,10000,10000,10000,10000],tgt:[8471,8220,8756,8967,9295,9604,9596,9310,9916,10285,10628,10948]},
+  "DO/Driver": {a25:[162.8514,149.5863,181.2661,165.7927,179.4965,184.278,165.9028,151.3203,167.448,162.6387,153.8559,166.2417],a26:[153.1556,135.075,151.9218,150.2076,173.5787,null,null,null,null,null,null,null],sim:[null,null,null,null,null,182.5212,157.7332,162.562,179.9593,180.3723,169.1122,183.5344],tgt:[168.8956,162.454,201.5621,200.3237,207.3214,211.2466,199.3291,171.849,200.5435,191.1455,180.3947,179.6564]},
+ },
+ "PE": {
+  "GMV B2C": {a25:[4983738,5015185,5740319,5692179,5877402,5894819,6080847,6053065,6197345,6565173,7381789,7675335],a26:[6345849,6344728,6498499,6127193,6698763,null,null,null,null,null,null,null],sim:[null,null,null,null,null,6866750,7072671,6825565,7192342,7442472,7545684,7933504],tgt:[5745162,5869107,6575781,6501969,6871636,6866750,7072671,6825565,7192342,7442472,7545684,7933504]},
+  "DOs (DO B2C)": {a25:[1001093,993768,1125967,1107225,1134338,1101046,1125122,1114564,1155317,1177243,1203205,1157827],a26:[1100288,1050563,1085392,1052330,1159673,null,null,null,null,null,null,null],sim:[null,null,null,null,null,1115493,1191626,1180697,1223549,1247232,1276661,1226642],tgt:[1071859,1079873,1199960,1171526,1227018,1221759,1234112,1238808,1279689,1298639,1316648,1313494]},
+  "Avg Ticket": {a25:[4.9783,5.0466,5.0981,5.1409,5.1813,5.3538,5.4046,5.4309,5.3642,5.5767,6.1351,6.6291],a26:[5.7674,6.0394,5.9872,5.8225,5.7764,null,null,null,null,null,null,null],sim:[null,null,null,null,null,6.1558,5.9353,5.781,5.8783,5.9672,5.9105,6.4677],tgt:[5.36,5.435,5.48,5.55,5.6003,5.6204,5.731,5.5098,5.6204,5.731,5.731,6.04]},
+  "NCC": {a25:[705622,703796,733615,624644,696688,604219,644296,672487,712076,745203,928810,985881],a26:[705077,723959,724592,550526,750976,null,null,null,null,null,null,null],sim:[null,null,null,null,null,645969,662819,706979,804307,776859,773794,878765],tgt:[533376,545364,710690,595295,634410,645969,662819,706979,804307,776859,773794,878765]},
+  "Active Users": {a25:[201938,207981,217261,216708,216570,216564,218380,214313,217672,222376,232279,228636],a26:[219946,219006,207602,206372,237787,null,null,null,null,null,null,null],sim:[null,null,null,null,null,219000,229000,225000,228000,233000,244000,240000],tgt:[213518,222654,227265,229711,233718,236775,239633,238232,240996,245026,251269,255047]},
+  "AU RAM": {a25:[394761,391384,383405,386616,383350,385532,384252,385448,386161,388488,399927,402615],a26:[399525,402460,390969,391894,343671,null,null,null,null,null,null,null],sim:[null,null,null,null,null,389060,402935,404276,404918,407509,420141,422321],tgt:[null,null,null,null,388074,389060,402935,404276,404918,407509,420141,422321]},
+  "Do/User": {a25:[4.9574,4.7782,5.1826,5.1093,5.2377,5.0842,5.1521,5.2006,5.3076,5.2939,5.18,5.0641],a26:[5.0025,4.797,5.2282,5.0992,4.8769,null,null,null,null,null,null,null],sim:[null,null,null,null,null,5.0936,5.2036,5.2475,5.3664,5.3529,5.2322,5.111],tgt:[5.02,4.85,5.28,5.1,5.25,5.16,5.15,5.2,5.31,5.3,5.24,5.15]},
+  "Active Drivers": {a25:[17463,16982,17851,18127,17947,18550,18487,19368,19818,19927,20036,19782],a26:[18637,18544,19445,19717,19717,null,null,null,null,null,null,null],sim:[null,null,null,null,null,20000,20000,21000,21000,21000,21000,21000],tgt:[19846,20072,20335,20619,20870,21105,21324,21529,21721,21901,22068,21772]},
+  "DO/Driver": {a25:[57.3265,58.5189,63.0759,61.0815,63.2049,59.3556,60.8602,57.5467,58.2963,59.0778,60.0522,58.5293],a26:[59.0378,56.6524,55.8186,53.3717,73.332,null,null,null,null,null,null,null],sim:[null,null,null,null,null,55.7747,59.5813,56.2237,58.2642,59.392,60.7934,58.4115],tgt:[54.0088,53.8,59.0096,56.8178,58.7934,57.8896,57.8743,57.5414,58.9148,59.2959,59.6632,60.3295]},
+ },
+ "UY": {
+  "GMV B2C": {a25:[793863,982991,1204312,1035647,1291284,1441188,1467417,1580298,1539304,1692502,1896253,2450670],a26:[1519307,1738096,2014406,1972675,2132161,null,null,null,null,null,null,null],sim:[null,null,null,null,null,1932201,1915536,2014513,1986523,2072612,2224877,2607390],tgt:[1350074,1510675,1780063,1556478,1806564,1932201,1915536,2014513,1986523,2072612,2224877,2607390]},
+  "DOs (DO B2C)": {a25:[95639,122981,140679,126779,151906,164205,169324,177117,171135,190508,200104,227106],a26:[162255,188700,224495,220616,235218,null,null,null,null,null,null,null],sim:[null,null,null,null,null,251000,257000,269000,260000,289000,304000,345000],tgt:[153007,179737,197721,181133,202032,212051,212962,223147,220561,230157,243188,257253]},
+  "Avg Ticket": {a25:[8.3006,7.993,8.5607,8.1689,8.5005,8.7768,8.6663,8.9223,8.9947,8.8842,9.4763,10.7909],a26:[9.3637,9.2109,8.9731,8.9417,9.0646,null,null,null,null,null,null,null],sim:[null,null,null,null,null,7.698,7.4534,7.4889,7.6405,7.1717,7.3187,7.5577],tgt:[8.8236,8.4049,9.0029,8.593,8.942,9.112,8.9947,9.0277,9.0067,9.0052,9.1488,10.1355]},
+  "NCC": {a25:[-22304,3733,18861,-7028,9739,11322,11321,23102,-176,4144,-992,5011],a26:[3830,11731,32328,23037,38358,null,null,null,null,null,null,null],sim:[null,null,null,null,null,16443,17949,19987,23554,31497,29599,38735],tgt:[-556,1195,17185,9050,17353,16443,17949,19987,23554,31497,29599,38735]},
+  "Active Users": {a25:[31943,36754,40378,37200,42107,44623,45560,47263,46794,49965,55000,65494],a26:[48818,53553,58760,58893,61436,null,null,null,null,null,null,null],sim:[null,null,null,null,null,63000,64000,66000,66000,70000,77000,92000],tgt:[44094,48975,52726,48431,55351,57466,56790,58878,58610,61212,64850,70480]},
+  "AU RAM": {a25:[63160,63699,61885,62779,64528,67034,69632,71792,73253,75182,79615,88757],a26:[87802,88936,86976,90009,90121,null,null,null,null,null,null,null],sim:[null,null,null,null,null,94614,97791,100833,102876,105605,111873,124701],tgt:[null,null,null,null,90900,94614,97791,100833,102876,105605,111873,124701]},
+  "Do/User": {a25:[2.9941,3.3461,3.4841,3.408,3.6076,3.6798,3.7165,3.7475,3.6572,3.8128,3.6383,3.4676],a26:[3.3237,3.5236,3.8205,3.746,3.8287,null,null,null,null,null,null,null],sim:[null,null,null,null,null,3.9841,4.0156,4.0758,3.9394,4.1286,3.9481,3.75],tgt:[3.47,3.67,3.75,3.74,3.65,3.69,3.75,3.79,3.7632,3.76,3.75,3.65]},
+  "Active Drivers": {a25:[1254,1277,1358,1373,1427,1382,1459,1485,1492,1538,1554,1643],a26:[1651,1642,1771,1736,1736,null,null,null,null,null,null,null],sim:[null,null,null,null,null,2000,2000,2000,2000,2000,2000,2000],tgt:[1571,1570,1567,1539,1577,1537,1605,1653,1776,1792,1807,1821]},
+  "DO/Driver": {a25:[76.2671,96.3046,103.5928,92.3372,106.4513,118.8169,116.0548,119.2707,114.7017,123.8674,128.7671,138.2264],a26:[98.2768,114.9208,126.7617,127.0829,143.2241,null,null,null,null,null,null,null],sim:[null,null,null,null,null,125.5,128.5,134.5,130,144.5,152,172.5],tgt:[97.3947,114.4822,126.178,117.6953,128.1116,137.9642,132.6866,134.9952,124.1898,128.4358,134.5811,141.2702]},
+ },
+};
+
+const INVESTMENT_DATA = {
+ 'ALL COUNTRIES': {
+  ytd25:{inv:20730647, brand:6685734, pct_brand:.323, acq:3256662, pct_acq:.157, eng:10787773, pct_eng:.520, disc:11177028, pct_disc:.030, gmv:293577523},
+  ytd:  {inv:22473957, brand:11746502, pct_brand:.523, acq:7526269, pct_acq:.335, eng:3201186, pct_eng:.142, disc:8559308, pct_disc:.022, gmv:312152580},
+ },
+ 'ES': {
+  ytd25:{inv:8898589, brand:1908521, pct_brand:.214, acq:409005, pct_acq:.046, eng:6581297, pct_eng:.740, disc:6728994, pct_disc:.050, gmv:125296863},
+  ytd:  {inv:8851420, brand:4941519, pct_brand:.558, acq:2936327, pct_acq:.332, eng:973702, pct_eng:.110, disc:3640776, pct_disc:.025, gmv:135341740},
+ },
+ 'AR': {
+  ytd25:{inv:5179158, brand:2161218, pct_brand:.417, acq:1649288, pct_acq:.318, eng:1368744, pct_eng:.264, disc:1576393, pct_disc:.014, gmv:87471741},
+  ytd:  {inv:5751113, brand:3416181, pct_brand:.594, acq:1482204, pct_acq:.258, eng:852728, pct_eng:.148, disc:1714894, pct_disc:.016, gmv:85628909},
+ },
+ 'CL': {
+  ytd25:{inv:1786823, brand:639493, pct_brand:.358, acq:398484, pct_acq:.223, eng:748847, pct_eng:.419, disc:771409, pct_disc:.022, gmv:23109603},
+  ytd:  {inv:2378874, brand:1109258, pct_brand:.466, acq:915321, pct_acq:.385, eng:354330, pct_eng:.149, disc:987697, pct_disc:.025, gmv:26778452},
+ },
+ 'CO': {
+  ytd25:{inv:1714709, brand:757869, pct_brand:.442, acq:366855, pct_acq:.214, eng:589937, pct_eng:.344, disc:677972, pct_disc:.017, gmv:25082396},
+  ytd:  {inv:2108606, brand:823249, pct_brand:.390, acq:969504, pct_acq:.460, eng:315802, pct_eng:.150, disc:1122142, pct_disc:.026, gmv:23011801},
+ },
+ 'PE': {
+  ytd25:{inv:2136532, brand:624705, pct_brand:.292, acq:360645, pct_acq:.169, eng:1151148, pct_eng:.539, disc:1092284, pct_disc:.029, gmv:27308823},
+  ytd:  {inv:2024859, brand:726752, pct_brand:.359, acq:774094, pct_acq:.382, eng:524013, pct_eng:.259, disc:829876, pct_disc:.017, gmv:32015032},
+ },
+ 'UY': {
+  ytd25:{inv:366535, brand:177913, pct_brand:.485, acq:72038, pct_acq:.197, eng:116572, pct_eng:.318, disc:124599, pct_disc:.022, gmv:5308097},
+  ytd:  {inv:675666, brand:403604, pct_brand:.597, acq:212476, pct_acq:.314, eng:59609, pct_eng:.088, disc:243247, pct_disc:.024, gmv:9376645},
+ },
+};
+
+const AU_RAM_DATA = {
+ "ALL COUNTRIES": {
+  a25_ram:[4100965,4023746,3926580,3941870,3979848,4017239,4066131,4036153,4034156,4061089,4144492,4258045],
+  a26_ram:[4120725,4058054,3949017,3995180,4045324,null,null,null,null,null,null,null],
+  tgt_ram:[null,null,null,null,4249065,4290587,4537824,4499345,4506435,4544665,4640879,4759993],
+  a25_new:[155927,153934,187609,168444,180650,188772,199529,191908,181020,180167,187063,207879],
+  a26_new:[155257,155646,169779,158678,198051,null,null,null,null,null,null,null],
+  tgt_new:[null,null,null,null,185384,191189,215262,208044,198027,197738,205147,224015],
+  a25_react:[308996,328616,393131,360652,397933,397330,388307,365486,400198,428109,427380,457803],
+  a26_react:[320071,347556,417965,400104,416067,null,null,null,null,null,null,null],
+  tgt_react:[null,null,null,null,441702,442694,462371,435507,480952,511873,510321,543452],
+  a25_recur:[3636042,3541196,3345840,3412774,3401265,3431137,3478295,3478759,3452938,3452813,3530049,3592363],
+  a26_recur:[3645397,3554852,3361273,3436398,3431206,null,null,null,null,null,null,null],
+  tgt_recur:[null,null,null,null,3621978,3656704,3860191,3855794,3827457,3835054,3925411,3992526],
+  a25_churn:[-612144,-559769,-677906,-513806,-540605,-548711,-538944,-587372,-583215,-581343,-531040,-552129],
+  a26_churn:[-612648,-565875,-696783,-512592,-563974,null,null,null,null,null,null,null],
+  tgt_churn:[null,null,null,null,-605093,-592360,-430397,-682029,-671888,-671382,-619254,-648353],
+ },
+ "AR": {
+  a25_ram:[1323398,1318664,1307314,1316527,1320698,1317656,1348032,1358338,1354846,1353405,1395782,1465706],
+  a26_ram:[1423934,1405462,1368002,1381243,1369914,null,null,null,null,null,null,null],
+  tgt_ram:[null,null,null,null,1457423,1458743,1509508,1519082,1516716,1519058,1567828,1643320],
+  a25_new:[57342,57013,67208,57554,56417,54343,64186,56451,48413,54838,63773,73976],
+  a26_new:[50182,51011,53783,50275,52179,null,null,null,null,null,null,null],
+  tgt_new:[null,null,null,null,52011,49605,66816,59662,51797,58124,67259,77103],
+  a25_react:[97273,106173,122439,111199,117990,114850,127880,116672,108029,123502,139023,148196],
+  a26_react:[96017,116889,134735,126209,119597,null,null,null,null,null,null,null],
+  tgt_react:[null,null,null,null,133854,131812,158286,145768,135779,153839,172897,184218],
+  a25_recur:[1168783,1155478,1117667,1147774,1146291,1148463,1155966,1185215,1198404,1175065,1192986,1243534],
+  a26_recur:[1277735,1237562,1179484,1204759,1198138,null,null,null,null,null,null,null],
+  tgt_recur:[null,null,null,null,1271559,1277327,1284406,1313653,1329140,1307096,1327672,1381999],
+  a25_churn:[-175764,-167920,-200997,-159540,-170236,-172235,-161690,-162817,-159934,-179781,-160419,-152248],
+  a26_churn:[-187971,-186342,-225934,-163243,-183094,null,null,null,null,null,null,null],
+  tgt_churn:[null,null,null,null,-176373,-180097,-174337,-195856,-189942,-209621,-191386,-185829],
+ },
+ "ES": {
+  a25_ram:[1415581,1388697,1369829,1394653,1433629,1475948,1492534,1455799,1446973,1438736,1437117,1449406],
+  a26_ram:[1404319,1385226,1354693,1380404,1443641,null,null,null,null,null,null,null],
+  tgt_ram:[null,null,null,null,1482514,1504634,1551509,1556967,1613414,1632174,1634452,1660798],
+  a25_new:[61701,57908,77120,72459,80870,91205,87193,85487,85274,73423,65058,70595],
+  a26_new:[58582,54995,69681,67822,96715,null,null,null,null,null,null,null],
+  tgt_new:[null,null,null,null,76717,86246,88079,85793,86484,75037,66536,71694],
+  a25_react:[129348,121381,163228,148844,158398,169993,152649,137031,176491,169749,159553,184594],
+  a26_react:[135793,128147,160875,155990,175173,null,null,null,null,null,null,null],
+  tgt_react:[null,null,null,null,166767,178269,178110,158675,208796,200520,187688,215495],
+  a25_recur:[1224532,1209408,1129481,1173350,1194361,1214750,1252692,1233281,1185208,1195564,1212506,1194217],
+  a26_recur:[1209944,1202084,1124137,1156592,1171753,null,null,null,null,null,null,null],
+  tgt_recur:[null,null,null,null,1239030,1240118,1285320,1312500,1318134,1356618,1380228,1373609],
+  a25_churn:[-238896,-206173,-259216,-196479,-200292,-218879,-223256,-259253,-270591,-251409,-226230,-242900],
+  a26_churn:[-239462,-202275,-261126,-198074,-208652,null,null,null,null,null,null,null],
+  tgt_churn:[null,null,null,null,-175201,-242396,-219314,-239009,-238834,-256796,-251946,-260843],
+ },
+ "CO": {
+  a25_ram:[541325,518880,468079,447960,439243,435217,434031,424011,425582,450391,469910,477802],
+  a26_ram:[441392,430797,413628,422506,418930,null,null,null,null,null,null,null],
+  tgt_ram:[null,null,null,null,444675,443893,454907,446922,451033,480631,495809,498464],
+  a25_new:[10500,14140,12552,9387,12272,12983,15007,15651,14187,18308,17955,19383],
+  a26_new:[10916,15673,13952,13571,16613,null,null,null,null,null,null,null],
+  tgt_new:[null,null,null,null,17266,17818,21415,22440,20808,25519,24961,26002],
+  a25_react:[29679,43146,36557,36319,55156,47344,42328,43591,47943,62826,56152,50394],
+  a26_react:[31502,45159,51299,45435,45749,null,null,null,null,null,null,null],
+  tgt_react:[null,null,null,null,69314,61237,59563,60589,66720,85730,77346,69213],
+  a25_recur:[501146,461594,418970,402254,371815,374890,376696,364769,363452,369257,395803,408025],
+  a26_recur:[398974,369965,348377,363500,356568,null,null,null,null,null,null,null],
+  tgt_recur:[null,null,null,null,358095,364838,373929,363893,363505,369382,393502,403249],
+  a25_churn:[-82548,-79731,-99910,-65825,-76145,-64353,-58521,-69262,-60559,-56325,-54588,-61885],
+  a26_churn:[-78828,-71420,-82414,-50128,-65939,null,null,null,null,null,null,null],
+  tgt_churn:[null,null,null,null,-120225,-79836,-69964,-91014,-83417,-81651,-87129,-92560],
+ },
+ "CL": {
+  a25_ram:[400586,380774,374734,372708,377951,375858,377344,381261,389111,398129,407129,417856],
+  a26_ram:[407792,389417,379678,375859,379043,null,null,null,null,null,null,null],
+  tgt_ram:[null,null,null,null,413250,410721,425129,429821,437839,447950,457757,468984],
+  a25_new:[12872,10101,12919,11969,13763,12517,14342,15852,15719,15957,16922,19760],
+  a26_new:[15181,11635,13375,11628,13136,null,null,null,null,null,null,null],
+  tgt_new:[null,null,null,null,16186,14597,16685,18527,18084,18563,19822,22395],
+  a25_react:[28418,25870,39828,34395,37165,32798,34046,36258,36050,38571,37151,38228],
+  a26_react:[28842,25381,40163,35650,37275,null,null,null,null,null,null,null],
+  tgt_react:[null,null,null,null,39409,34818,39498,41967,41622,44783,42980,43997],
+  a25_recur:[359296,344803,321987,326344,327023,330543,328956,329151,337342,343601,353056,359868],
+  a26_recur:[363769,352401,326140,328581,328632,null,null,null,null,null,null,null],
+  tgt_recur:[null,null,null,null,357655,361306,368947,369327,378134,384603,394955,402592],
+  a25_churn:[-56820,-55783,-58787,-48390,-45685,-47408,-46902,-48193,-43919,-45510,-45073,-47261],
+  a26_churn:[-54087,-55388,-63269,-51097,-47228,null,null,null,null,null,null,null],
+  tgt_churn:[null,null,null,null,-47031,-51944,-41774,-55803,-51688,-53236,-52996,-55164],
+ },
+ "PE": {
+  a25_ram:[358844,354981,346746,349355,346007,347827,346925,347414,346891,347829,357622,361240],
+  a26_ram:[358060,360708,348551,347877,343671,null,null,null,null,null,null,null],
+  tgt_ram:[null,null,null,null,388074,389060,402935,404276,404918,407509,420141,422321],
+  a25_new:[10570,11520,14068,14002,13528,13837,14860,14541,13645,13518,18307,16256],
+  a26_new:[16198,18177,14235,10823,13627,null,null,null,null,null,null,null],
+  tgt_new:[null,null,null,null,18818,18413,19387,19222,18501,18611,24380,21124],
+  a25_react:[21561,27624,26151,25662,24093,26805,26427,26796,26645,27952,28945,28142],
+  a26_react:[23635,26010,24100,30125,31779,null,null,null,null,null,null,null],
+  tgt_react:[null,null,null,null,27142,29693,34134,35044,35,36280,37405,36],
+  a25_recur:[326713,315837,306527,309691,308386,307185,305638,306077,306601,306359,310370,316842],
+  a26_recur:[318227,316521,310216,306929,298265,null,null,null,null,null,null,null],
+  tgt_recur:[null,null,null,null,342114,340954,349414,350010,351416,352618,358356,365197],
+  a25_churn:[-50554,-43007,-48454,-37055,-40969,-38822,-42189,-40848,-40813,-40532,-37459,-40780],
+  a26_churn:[-43013,-41532,-50491,-41622,-49615,null,null,null,null,null,null,null],
+  tgt_churn:[null,null,null,null,-49780,-47120,-39646,-52925,-52860,-52300,-49154,-54944],
+ },
+ "UY": {
+  a25_ram:[61231,61750,59878,60667,62320,64733,67265,69330,70753,72599,76932,86035],
+  a26_ram:[85228,86444,84465,87291,90121,null,null,null,null,null,null,null],
+  tgt_ram:[null,null,null,null,90900,94614,97791,100833,102876,105605,111873,124701],
+  a25_new:[2942,3252,3742,3073,3800,3887,3941,3926,3782,4123,5048,7909],
+  a26_new:[4198,4155,4753,4559,5781,null,null,null,null,null,null,null],
+  tgt_new:[null,null,null,null,5341,5390,5519,5515,5297,5800,7038,10854],
+  a25_react:[2717,4422,4928,4233,5131,5540,4977,5138,5040,5509,6556,8249],
+  a26_react:[4282,5970,6793,6695,6494,null,null,null,null,null,null,null],
+  tgt_react:[null,null,null,null,7779,8197,7664,7934,7770,8478,10092,12641],
+  a25_recur:[55572,54076,51208,53361,53389,55306,58347,60266,61931,62967,65328,69877],
+  a26_recur:[76748,76319,72919,76037,77846,null,null,null,null,null,null,null],
+  tgt_recur:[null,null,null,null,77780,81026,84609,87385,89809,91328,94744,101206],
+  a25_churn:[-7562,-7155,-10542,-6517,-7278,-7014,-6386,-6999,-7399,-7786,-7271,-7055],
+  a26_churn:[-9287,-8918,-13549,-8428,-9446,null,null,null,null,null,null,null],
+  tgt_churn:[null,null,null,null,-12229,-9874,-10005,-10406,-11025,-11548,-10862,-10667],
+ },
+};
+
+const RAM_COMP_DATA = {
+ "ALL COUNTRIES": {
+  "New": {
+   a25:[155927,153934,187609,168444,180650,188772,199529,191908,181020,180167,187063,207879],
+   a26:[155257,155646,169779,158678,198051,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,185384,191189,215262,208044,198027,197738,205147,224015],
+   model:[null,null,null,null,198052,196331,206762,200244,190998,191114,198684,217404],
+  },
+  "Reactivated": {
+   a25:[308996,328616,393131,360652,397933,397330,388307,365486,400198,428109,427380,457803],
+   a26:[320071,347556,417965,400104,416067,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,441702,442694,462371,435507,480952,511873,510321,543452],
+   model:[null,null,null,null,416066,433118,423116,398202,439388,467248,465443,495248],
+  },
+  "Recurrent": {
+   a25:[3636042,3541196,3345840,3412774,3401265,3431137,3478295,3478759,3452938,3452813,3530049,3592363],
+   a26:[3645397,3554852,3361273,3436398,3431206,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,3621978,3656704,3860191,3855794,3827457,3835054,3925411,3992526],
+   model:[null,null,null,null,3431202,3508904,3518081,3477710,3416055,3386666,3429439,3450420],
+  },
+  "Churn": {
+   a25:[-612144,-559769,-677906,-513806,-540605,-548711,-538944,-587372,-583215,-581343,-531040,-552129],
+   a26:[-612648,-565875,-696783,-512592,-563974,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,-605093,-592360,-430397,-682029,-671888,-671382,-619254,-648353],
+   model:[null,null,null,null,-563975,-569181,-556454,-604098,-592664,-584367,-530157,-553260],
+  },
+ },
+ "AR": {
+  "New": {
+   a25:[57342,57013,67208,57554,56417,54343,64186,56451,48413,54838,63773,73976],
+   a26:[50182,51011,53783,50275,52177,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,52011,49605,66816,59662,51797,58124,67259,77103],
+   model:[null,null,null,null,52179,49252,57242,50940,44075,49291,56843,64939],
+  },
+  "Reactivated": {
+   a25:[97273,106173,122439,111199,117990,114850,127880,116672,108029,123502,139023,148196],
+   a26:[96017,116889,134735,126209,119596,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,133854,131812,158286,145768,135779,153839,172897,184218],
+   model:[null,null,null,null,119593,125747,139337,128151,119216,134898,151413,161118],
+  },
+  "Recurrent": {
+   a25:[1168783,1155478,1117667,1147774,1146291,1148463,1155966,1185215,1198404,1175065,1192986,1243534],
+   a26:[1277735,1237562,1179484,1204759,1198146,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,1271559,1277327,1284406,1313653,1329140,1307096,1327672,1381999],
+   model:[null,null,null,null,1198176,1195853,1178288,1179571,1167630,1122845,1114701,1133437],
+  },
+  "Churn": {
+   a25:[-175764,-167920,-200997,-159540,-170236,-172235,-161690,-162817,-159934,-179781,-160419,-152248],
+   a26:[-187971,-186342,-225934,-163243,-183097,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,-176373,-180097,-174337,-195856,-189942,-209621,-191386,-185829],
+   model:[null,null,null,null,-183091,-178699,-163871,-161261,-152102,-164282,-142796,-132327],
+  },
+ },
+ "ES": {
+  "New": {
+   a25:[61701,57908,77120,72459,80870,91205,87193,85487,85274,73423,65058,70595],
+   a26:[58582,54995,69681,67822,96714,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,76717,86246,88079,85793,86484,75037,66536,71694],
+   model:[null,null,null,null,96719,103650,102554,103787,108550,97590,89555,99752],
+  },
+  "Reactivated": {
+   a25:[129348,121381,163228,148844,158398,169993,152649,137031,176491,169749,159553,184594],
+   a26:[135793,128147,160875,155990,175174,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,166767,178269,178110,158675,208796,200520,187688,215495],
+   model:[null,null,null,null,175186,184489,166208,149090,197524,190982,179965,208011],
+  },
+  "Recurrent": {
+   a25:[1224532,1209408,1129481,1173350,1194361,1214750,1252692,1233281,1185208,1195564,1212506,1194217],
+   a26:[1209944,1202084,1124137,1156592,1171754,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,1239030,1240118,1285320,1312500,1318134,1356618,1380228,1373609],
+   model:[null,null,null,null,1171719,1197592,1225045,1193746,1135166,1138453,1149310,1124752],
+  },
+  "Churn": {
+   a25:[-238896,-206173,-259216,-196479,-200292,-218879,-223256,-259253,-270591,-251409,-226230,-242900],
+   a26:[-239462,-202275,-261126,-198074,-208650,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,-175201,-242396,-219314,-239009,-238834,-256796,-251946,-260843],
+   model:[null,null,null,null,-208654,-230184,-237090,-280378,-294172,-274264,-247695,-270608],
+  },
+ },
+ "CO": {
+  "New": {
+   a25:[10500,14140,12552,9387,12272,12983,15007,15651,14187,18308,17955,19383],
+   a26:[10916,15673,13952,13571,16614,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,17266,17818,21415,22440,20808,25519,24961,26002],
+   model:[null,null,null,null,16614,19064,22750,24566,23453,29590,29752,31834],
+  },
+  "Reactivated": {
+   a25:[29679,43146,36557,36319,55156,47344,42328,43591,47943,62826,56152,50394],
+   a26:[31502,45159,51299,45435,45749,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,69314,61237,59563,60589,66720,85730,77346,69213],
+   model:[null,null,null,null,45753,50025,43989,43023,45478,55997,48321,41271],
+  },
+  "Recurrent": {
+   a25:[501146,461594,418970,402254,371815,374890,376696,364769,363452,369257,395803,408025],
+   a26:[398974,369965,348377,363500,356568,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,358095,364838,373929,363893,363505,369382,393502,403249],
+   model:[null,null,null,null,356580,381011,389462,385594,391761,404779,438330,456486],
+  },
+  "Churn": {
+   a25:[-82548,-79731,-99910,-65825,-76145,-64353,-58521,-69262,-60559,-56325,-54588,-61885],
+   a26:[-78828,-71420,-82414,-50128,-65938,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,-120225,-79836,-69964,-91014,-83417,-81651,-87129,-92560],
+   model:[null,null,null,null,-65939,-52189,-45139,-50446,-41795,-37152,-33672,-36460],
+  },
+ },
+ "CL": {
+  "New": {
+   a25:[12872,10101,12919,11969,13763,12517,14342,15852,15719,15957,16922,19760],
+   a26:[15181,11635,13375,11628,13138,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,16186,14597,16685,18527,18084,18563,19822,22395],
+   model:[null,null,null,null,13130,11374,11743,11826,10359,9417,8757,8426],
+  },
+  "Reactivated": {
+   a25:[28418,25870,39828,34395,37165,32798,34046,36258,36050,38571,37151,38228],
+   a26:[28842,25381,40163,35650,37276,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,39409,34818,39498,41967,41622,44783,42980,43997],
+   model:[null,null,null,null,37278,33850,35062,37032,36508,39045,37246,37895],
+  },
+  "Recurrent": {
+   a25:[359296,344803,321987,326344,327023,330543,328956,329151,337342,343601,353056,359868],
+   a26:[363769,352401,326140,328581,328632,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,357655,361306,368947,369327,378134,384603,394955,402592],
+   model:[null,null,null,null,328641,336320,328255,322234,323408,322320,324195,323533],
+  },
+  "Churn": {
+   a25:[-56820,-55783,-58787,-48390,-45685,-47408,-46902,-48193,-43919,-45510,-45073,-47261],
+   a26:[-54087,-55388,-63269,-51097,-47227,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,-47031,-51944,-41774,-55803,-51688,-53236,-52996,-55164],
+   model:[null,null,null,null,-47232,-50720,-49967,-50586,-46108,-47200,-46406,-48064],
+  },
+ },
+ "PE": {
+  "New": {
+   a25:[10570,11520,14068,14002,13528,13837,14860,14541,13645,13518,18307,16256],
+   a26:[16198,18177,14235,10823,13626,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,18818,18413,19387,19222,18501,18611,24380,21124],
+   model:[null,null,null,null,13627,9412,6797,6572,6325,6363,8335,7222],
+  },
+  "Reactivated": {
+   a25:[21561,27624,26151,25662,24093,26805,26427,26796,26645,27952,28945,28142],
+   a26:[23635,26010,24100,30125,31780,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,27142,29693,34134,35044,35,36280,37405,36],
+   model:[null,null,null,null,31774,35191,35944,38278,39605,42476,45263,45],
+  },
+  "Recurrent": {
+   a25:[326713,315837,306527,309691,308386,307185,305638,306077,306601,306359,310370,316842],
+   a26:[318227,316521,310216,306929,298261,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,342114,340954,349414,350010,351416,352618,358356,365197],
+   model:[null,null,null,null,298263,309867,300048,292288,285157,277799,273850,270447],
+  },
+  "Churn": {
+   a25:[-50554,-43007,-48454,-37055,-40969,-38822,-42189,-40848,-40813,-40532,-37459,-40780],
+   a26:[-43013,-41532,-50491,-41622,-49616,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,-49780,-47120,-39646,-52925,-52860,-52300,-49154,-54944],
+   model:[null,null,null,null,-49614,-50079,-56756,-56466,-58232,-59596,-57000,-65770],
+  },
+ },
+ "UY": {
+  "New": {
+   a25:[2942,3252,3742,3073,3800,3887,3941,3926,3782,4123,5048,7909],
+   a26:[4198,4155,4753,4559,5782,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,5341,5390,5519,5515,5297,5800,7038,10854],
+   model:[null,null,null,null,5783,5929,6128,6250,6125,6839,8341,12864],
+  },
+  "Reactivated": {
+   a25:[2717,4422,4928,4233,5131,5540,4977,5138,5040,5509,6556,8249],
+   a26:[4282,5970,6793,6695,6492,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,7779,8197,7664,7934,7770,8478,10092,12641],
+   model:[null,null,null,null,6482,7255,6287,6254,5877,6140,6986,8345],
+  },
+  "Recurrent": {
+   a25:[55572,54076,51208,53361,53389,55306,58347,60266,61931,62967,65328,69877],
+   a26:[76748,76319,72919,76037,77845,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,77780,81026,84609,87385,89809,91328,94744,101206],
+   model:[null,null,null,null,77823,81800,86651,89915,92841,94851,98855,106085],
+  },
+  "Churn": {
+   a25:[-7562,-7155,-10542,-6517,-7278,-7014,-6386,-6999,-7399,-7786,-7271,-7055],
+   a26:[-9287,-8918,-13549,-8428,-9446,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,-12229,-9874,-10005,-10406,-11025,-11548,-10862,-10667],
+   model:[null,null,null,null,-9445,-9235,-8484,-9305,-9891,-10411,-9780,-9572],
+  },
+ },
+};
+
+// ── HELPERS ──────────────────────────────────────────────────────────────────
+function sum(arr){ return arr.filter(v=>v!==null).reduce((a,b)=>a+b,0); }
+function fmt(val,cfg){ if(val===null||val===undefined) return '—'; return cfg.unit+(val/cfg.scale).toFixed(cfg.decimals)+cfg.suffix; }
+function fmtPct(val){ return (val>=0?'+':'')+val.toFixed(1)+'%'; }
+function yoyPct(v26,v25){ return (v25&&v25!==0)?((v26-v25)/Math.abs(v25)*100):null; }
+
+// ── STATE ────────────────────────────────────────────────────────────────────
+let currentCountry='ALL COUNTRIES', currentMetric='GMV B2C', chart=null;
+const fyHidden = new Set(); // 'est','sim','tgt'
+const SHOW_SIM = true; // ← cambiar a false para ocultar Simulación B2C
+
+// ── ESTIMATION ───────────────────────────────────────────────────────────────
+function calcEst(d){
+  const ytdIdx=d.a26.map((v,i)=>v!==null?i:-1).filter(i=>i>=0);
+  const from=ytdIdx.length>0?ytdIdx[ytdIdx.length-1]+1:0;
+
+  // YoY medio de actuals (para KPIs y fallback)
+  const pairs=ytdIdx.map(i=>(d.a25[i]&&d.a25[i]!==0)?(d.a26[i]-d.a25[i])/d.a25[i]:null).filter(v=>v!==null);
+  const avgYoY=pairs.length?pairs.reduce((a,b)=>a+b,0)/pairs.length:0;
+
+  // Ratio YTD acumulado vs target: solo meses donde target también es non-null
+  const pairedIdx=ytdIdx.filter(i=>d.tgt[i]!=null);
+  const ytdActual=pairedIdx.reduce((s,i)=>s+(d.a26[i]||0),0);
+  const ytdTgt=pairedIdx.reduce((s,i)=>s+(d.tgt[i]||0),0);
+  const gapPct=ytdTgt?(ytdActual-ytdTgt)/ytdTgt:0;
+  const ytdRatio=ytdTgt?ytdActual/ytdTgt:null;
+
+  // Tendencia: tgt[i] × (ytdActual / ytdTgt)
+  // Refleja si vas por encima/debajo del plan en promedio, con la forma estacional del target
+  // Fallback a YoY plano si no hay target válido
+  const estFull=MONTHS.map((_,i)=>{
+    if(i<from) return null;
+    if(ytdRatio!=null && d.tgt[i]!=null) return d.tgt[i]*ytdRatio;
+    return d.a25[i]!=null?d.a25[i]*(1+avgYoY):null;
+  });
+  return {estFull, estH2:estFull.map((v,i)=>i>=6?v:null), avgYoY, gapPct};
+}
+
+// ── CHURN H2 TARGET RATES (tasas objetivo H2, fuente: equipo) ───────────────
+// Formato: { país: tasa% } — completar según se vayan validando
+const CHURN_H2_TGT_RATE = {
+  'CO': 17.88,
+};
+// Tasas mensuales estacionales H2 (escaladas desde 2025 para que media = CHURN_H2_TGT_RATE)
+// Indices 6-11 = Jul-Dic
+const CHURN_H2_SEASONAL = {
+  'CO': [null,null,null,null,null,null, 17.73, 21.31, 18.55, 16.62, 15.41, 17.65],
+};
+
+// ── AGGREGATION HELPERS ──────────────────────────────────────────────────────
+const SUM_METRICS = new Set(['GMV B2C','DOs (DO B2C)','NCC']);
+// Para métricas de stock/ratio → media; para métricas de flujo → suma
+function agg(arr) {
+  const vals = arr.filter(v => v !== null && v !== undefined);
+  if (!vals.length) return 0;
+  return SUM_METRICS.has(currentMetric) ? sum(vals) : sum(vals)/vals.length;
+}
+
+// ── FY BLOCKS ────────────────────────────────────────────────────────────────
+function renderFY(d,cfg){
+  const {estFull,avgYoY}=calcEst(d);
+  const ytdCount=d.a26.filter(v=>v!==null).length;
+  const ytdSum=agg(d.a26.filter(v=>v!==null));
+
+  // FY = actuals for months with data + scenario for the rest
+  // This matches exactly what renderScenarios does
+  const fyEst = SUM_METRICS.has(currentMetric)
+    ? ytdSum + sum(estFull.slice(ytdCount).filter(v=>v!==null))
+    : agg([...d.a26.filter(v=>v!==null), ...estFull.slice(ytdCount).filter(v=>v!==null)]);
+  const fySim = SUM_METRICS.has(currentMetric)
+    ? ytdSum + sum(d.sim.slice(ytdCount).filter(v=>v!==null))
+    : agg([...d.a26.filter(v=>v!==null), ...d.sim.slice(ytdCount).filter(v=>v!==null)]);
+  const fyTgt = SUM_METRICS.has(currentMetric)
+    ? ytdSum + sum(d.tgt.slice(ytdCount).filter(v=>v!==null))
+    : agg([...d.a26.filter(v=>v!==null), ...d.tgt.slice(ytdCount).filter(v=>v!==null)]);
+
+  // 2025 FY for comparison
+  const fy25=agg(d.a25);
+
+  const cards=[
+
+    ...(SHOW_SIM ? [{key:'sim', label:'FY 2026 · Simulación B2C', value:fySim, cls:'sim',
+     badge: fy25?fmtPct(yoyPct(fySim,fy25)):null, up:fySim>=fy25,
+     badge2: fyTgt?fmtPct(yoyPct(fySim,fyTgt)):null, up2:fySim>=fyTgt}] : []),
+    {key:'tgt', label:'FY 2026 · Target', value:fyTgt, cls:'tgt',
+     badge: fy25?fmtPct(yoyPct(fyTgt,fy25)):null, up:fyTgt>=fy25,
+     badge2: null, up2:false},
+  ];
+
+  document.getElementById('fyStrip').innerHTML=cards.map(c=>`
+    <div class="fy-card ${c.cls}${fyHidden.has(c.key)?' hidden-card':''}" data-fy="${c.key}" title="Click para mostrar/ocultar en gráfico">
+      <span class="fy-eye">${fyHidden.has(c.key)?'👁️‍🗨️':'👁️'}</span>
+      <div class="fy-card-label">${c.label}</div>
+      <div class="fy-card-value">${fmt(c.value,cfg)}</div>
+      <div class="fy-card-sub">vs FY 2025: ${fmt(fy25,cfg)}</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;">
+        ${c.badge!==null?`<div class="fy-badge ${c.up?'up':'down'}">${c.badge} vs 2025</div>`:''}
+        ${c.badge2!==null?`<div class="fy-badge ${c.up2?'up':'down'}">${c.badge2} vs Target</div>`:''}
+      </div>
+    </div>`).join('');
+
+  // click to toggle
+  document.querySelectorAll('.fy-card[data-fy]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      const k=el.dataset.fy;
+      if(fyHidden.has(k)) fyHidden.delete(k); else fyHidden.add(k);
+      render();
+    });
+  });
+}
+
+// toggle all
+document.getElementById('fyToggleAll').addEventListener('click',()=>{
+  const btn=document.getElementById('fyToggleAll');
+  if(fyHidden.size===3){ fyHidden.clear(); btn.textContent='Ocultar todo'; }
+  else{ ['est','sim','tgt'].forEach(k=>fyHidden.add(k)); btn.textContent='Mostrar todo'; }
+  render();
+});
+
+// ── KPI STRIP ────────────────────────────────────────────────────────────────
+function renderKPIs(d,cfg){
+  const {estH2,avgYoY}=calcEst(d);
+  const ytdVals=d.a26.filter(v=>v!==null);
+  const ytdCount=ytdVals.length;
+  const ytdLastIdx=d.a26.map((v,i)=>v!==null?i:-1).filter(i=>i>=0).pop()??0;
+  const ytdAvg=ytdCount?sum(ytdVals)/ytdCount:0;
+  const ytd25=sum(d.a25.slice(0,ytdCount));
+  const ytd26=sum(ytdVals);
+  const ytdYoY=yoyPct(ytd26,ytd25);
+
+  const estH2sum=agg(estH2.filter(v=>v!==null));
+  const h2Sim=agg(d.sim.slice(6).filter(v=>v!==null));
+  const h2_25=agg(d.a25.slice(6,12));
+  const h2tgt=agg(d.tgt.slice(6,12).filter(v=>v!==null));
+  const gapPct=h2tgt?yoyPct(estH2sum,h2tgt):null;
+  const simGapPct=h2tgt?yoyPct(h2Sim,h2tgt):null;
+  const simYoY=yoyPct(h2Sim,h2_25);
+  const h2tgtYoY=yoyPct(h2tgt,h2_25);
+
+  const usePct=PCT_BADGE_METRICS.has(currentMetric);
+
+  // GMV, DOs, NCC → mostrar suma YTD; resto → media mensual
+  const useSum = SUM_METRICS.has(currentMetric);
+  const ytdDisplay = useSum ? ytd26 : ytdAvg;
+  const ytdSubLabel = useSum
+    ? `Suma acumulada · Ene–${MONTHS[ytdLastIdx]}`
+    : `Media mensual · Ene–${MONTHS[ytdLastIdx]}`;
+
+  // Solo parear meses donde target también es non-null (evita ratio disparado en AU RAM)
+  const ytdPairedIdx=d.a26.map((v,i)=>v!==null&&d.tgt[i]!=null?i:-1).filter(i=>i>=0);
+  const ytdTgt=sum(ytdPairedIdx.map(i=>d.tgt[i]));
+  const ytdActualPaired=sum(ytdPairedIdx.map(i=>d.a26[i]));
+  const ytdVsTgt=ytdTgt?yoyPct(ytdActualPaired,ytdTgt):null;
+
+  const tendGapLabel = Math.abs(gapPct)<=0.5
+    ? `${(avgYoY*100).toFixed(1)}% YoY act. · tgt ${gapPct>=0?'+':''}${(gapPct*100).toFixed(1)}%`
+    : `${(avgYoY*100).toFixed(1)}% YoY (gap vs tgt fuera de rango)`;
+  const kpis=[
+    {label:'Actuals YTD 2026', value:fmt(ytdDisplay,cfg),
+     sub:ytdSubLabel,
+     badge: ytdYoY!==null?fmtPct(ytdYoY)+' YoY':null, up:ytdYoY>=0, accent:ytdYoY>=0?'green':'red',
+     badge2: ytdVsTgt!==null?fmtPct(ytdVsTgt)+' vs Target':null, up2:ytdVsTgt>=0},
+    {label:'H2 Target 2026', value:fmt(h2tgt,cfg),
+     sub:'Jul–Dic · Target original',
+     badge: h2tgtYoY!==null?fmtPct(h2tgtYoY)+' vs 2025':null, up:h2tgtYoY>=0, accent:'orange'},
+    {label:'Simulación B2C H2', value:fmt(h2Sim,cfg),
+     sub:'Jul–Dic · Estimación equipo B2C',
+     badge: simYoY!==null?fmtPct(simYoY)+' YoY':null, up:simYoY>=0, accent:simYoY>=0?'green':'red',
+     badge2: simGapPct!==null?fmtPct(simGapPct)+' vs Target':null, up2:simGapPct>=0},
+  ];
+
+  document.getElementById('kpiStrip').innerHTML=kpis.map(k=>`
+    <div class="kpi-card ${k.accent}">
+      <div class="kpi-label">${k.label}</div>
+      <div class="kpi-value">${k.value}</div>
+      <div class="kpi-sub">${k.sub}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${k.badge?`<div class="kpi-badge ${k.up?'up':'down'}">${k.badge}</div>`:''}
+        ${k.badge2?`<div class="kpi-badge ${k.up2?'up':'down'}">${k.badge2}</div>`:''}
+      </div>
+    </div>`).join('');
+}
+
+
+// ── SCENARIO STRIP ───────────────────────────────────────────────────────────
+const scHidden = new Set(); // 'h1', 'h2'
+function toggleScAll() {
+  const body = document.getElementById('scenarioBody');
+  const btn  = document.getElementById('scToggleAll');
+  const hidden = body.style.display === 'none';
+  body.style.display = hidden ? '' : 'none';
+  btn.textContent = hidden ? 'Ocultar bloque' : 'Mostrar bloque';
+}
+function toggleScHalf(half) {
+  if (scHidden.has(half)) scHidden.delete(half); else scHidden.add(half);
+  const btn = document.getElementById('scToggle' + half.toUpperCase() + half.slice(1).toLowerCase().replace('1','1').replace('2','2'));
+  // Update button labels
+  const b1 = document.getElementById('scToggleH1');
+  const b2 = document.getElementById('scToggleH2');
+  if (b1) b1.textContent = scHidden.has('h1') ? 'Mostrar H1' : 'Ocultar H1';
+  if (b2) b2.textContent = scHidden.has('h2') ? 'Mostrar H2' : 'Ocultar H2';
+  // Re-render scenarios only
+  const cfg = METRICS_CFG[currentMetric];
+  const d = ALL_DATA[currentCountry][currentMetric];
+  renderScenarios(d, cfg);
+}
+function renderScenarios(d, cfg) {
+  const {estH2, estFull, avgYoY} = calcEst(d);
+
+  // H1 actuals (always real)
+  const h1Actuals = d.a26.slice(0,6).filter(v=>v!==null);
+  const h1sum = h1Actuals.reduce((a,b)=>a+b,0);
+  const h1_25 = d.a25.slice(0,6).reduce((a,b)=>a+(b||0),0);
+
+  // H2 scenarios (raw sums for YoY%, display via agg)
+  const h2TendArr = estH2.filter(v=>v!==null);
+  const h2SimArr  = d.sim.slice(6).filter(v=>v!==null);
+  const h2TgtArr  = d.tgt.slice(6).filter(v=>v!==null);
+  const h2Tend  = agg(h2TendArr);
+  const h2Sim   = agg(h2SimArr);
+  const h2Tgt   = agg(h2TgtArr);
+  const h2_25   = agg(d.a25.slice(6).filter(v=>v!==null));
+
+  // FY 2025
+  const fy25 = agg(d.a25);
+
+  // Fix: compare H1 YoY only for months where actuals exist
+  const ytdCount = d.a26.filter(v=>v!==null).length;
+  const h1_25_same = d.a25.slice(0,ytdCount).reduce((a,b)=>a+(b||0),0);
+
+  // For FY tendencia/sim/tgt: fill missing H1 months (May-Jun) with estimation too
+  const h1TendRaw = h1sum + estFull.slice(ytdCount,6).filter(v=>v!==null).reduce((a,b)=>a+b,0);
+  const h1SimRaw  = h1sum + d.sim.slice(ytdCount,6).filter(v=>v!==null).reduce((a,b)=>a+b,0);
+  const h1TgtRaw  = d.tgt.slice(0,6).reduce((a,b)=>a+(b||0),0);
+  const h1_25_raw = d.a25.slice(0,6).reduce((a,b)=>a+(b||0),0);
+  const h1Tend = SUM_METRICS.has(currentMetric) ? h1TendRaw : agg([...h1Actuals, ...estFull.slice(ytdCount,6).filter(v=>v!==null)]);
+  const h1Sim  = SUM_METRICS.has(currentMetric) ? h1SimRaw  : agg([...h1Actuals, ...d.sim.slice(ytdCount,6).filter(v=>v!==null)]);
+  const h1Tgt  = agg(d.tgt.slice(0,6).filter(v=>v!==null));
+  const h1_25_full = agg(d.a25.slice(0,6).filter(v=>v!==null));
+
+  // FY correcto: para no-suma = media de los 12 meses proyectados, no h1avg+h2avg
+  const fyTendAll = [...h1Actuals, ...estFull.slice(ytdCount,6).filter(v=>v!==null), ...estH2.filter(v=>v!==null)];
+  const fySimAll  = [...h1Actuals, ...d.sim.slice(ytdCount,6).filter(v=>v!==null), ...d.sim.slice(6).filter(v=>v!==null)];
+  const fyTgtAll  = d.tgt.filter(v=>v!==null);
+
+  const fyTend = SUM_METRICS.has(currentMetric) ? h1TendRaw + h2TendArr.reduce((a,b)=>a+b,0) : agg(fyTendAll);
+  const fySim  = SUM_METRICS.has(currentMetric) ? h1SimRaw  + h2SimArr.reduce((a,b)=>a+b,0)  : agg(fySimAll);
+  const fyTgt  = SUM_METRICS.has(currentMetric) ? h1TgtRaw  + h2TgtArr.reduce((a,b)=>a+b,0)  : agg(fyTgtAll);
+  const fyTgtVal = fyTgt; // para badge vs target
+
+  const scenarios = [
+
+    ...(SHOW_SIM ? [{key:'sc-sim', scen:'sim', label:'Simulacion B2C', h1:h1Sim, h1base:h1_25_full, h2:h2Sim, h225:h2_25, fy:fySim, fy25:fy25}] : []),
+    {key:'sc-tgt', scen:'tgt', label:'Target', h1:h1Tgt, h1base:h1_25_full, h2:h2Tgt, h225:h2_25, fy:fyTgt, fy25:fy25},
+  ];
+
+  function fv(v) { return v!==null ? cfg.unit+(v/cfg.scale).toFixed(cfg.decimals)+cfg.suffix : '—'; }
+  function pct(v, base) {
+    if(v===null||!base||base===0) return null;
+    const p = (v-base)/Math.abs(base)*100;
+    return {txt:(p>=0?'+':'')+p.toFixed(1)+'%', up:p>=0};
+  }
+
+  document.getElementById('scenarioStrip').innerHTML = scenarios.map(s => {
+    const h1pct = pct(s.h1, s.h1base);
+    const h2pct = pct(s.h2, s.h225);
+    const fypct = pct(s.fy, s.fy25);
+    const fytgtpct = fyTgtVal ? pct(s.fy, fyTgtVal) : null;
+    return `
+    <div class="scenario-card ${s.key}">
+      <div class="sc-label">${s.label}</div>
+      <div class="sc-row">
+        ${scHidden.has('h1') ? '' : `<div class="sc-half">
+          <div class="sc-half-label">H1 Actuals</div>
+          <div class="sc-half-value">${fv(s.h1)}</div>
+          ${h1pct ? `<div class="sc-badge ${h1pct.up?'up':'down'}">${h1pct.txt}</div>` : ''}
+        </div>`}
+        ${(!scHidden.has('h1') && !scHidden.has('h2')) ? '<div class="sc-divider"></div>' : ''}
+        ${scHidden.has('h2') ? '' : `<div class="sc-half">
+          <div class="sc-half-label">H2</div>
+          <div class="sc-half-value">${fv(s.h2)}</div>
+          ${h2pct ? `<div class="sc-badge ${h2pct.up?'up':'down'}">${h2pct.txt}</div>` : '<div class="sc-badge" style="background:var(--m10);color:var(--gray-n60);">pendiente</div>'}
+        </div>`}
+      </div>
+      <div style="font-size:9px;color:var(--gray-n60);margin-top:2px;">FY: <b style="color:var(--m80)">${fv(s.fy)}</b>${s.fy&&fypct?` <span class="sc-badge ${fypct.up?'up':'down'}" style="padding:1px 5px;">${fypct.txt} YoY</span>`:''}${s.fy&&fytgtpct?` <span class="sc-badge ${fytgtpct.up?'up':'down'}" style="padding:1px 5px;">${fytgtpct.txt} vs Tgt</span>`:''}</div>
+    </div>`;
+  }).join('');
+}
+
+// Click en scenario cards → toggle fyHidden (sincronizado con FY cards)
+document.getElementById('scenarioStrip').addEventListener('click', e => {
+  const card = e.target.closest('[data-scen]');
+  if (!card) return;
+  const k = card.dataset.scen;
+  if (fyHidden.has(k)) fyHidden.delete(k); else fyHidden.add(k);
+  render();
+});
+
+// ── CHART ────────────────────────────────────────────────────────────────────
+function render(){
+  // Investment metric: custom view, skip standard render
+  if(currentMetric === 'Investment') {
+    const invCard = document.getElementById('investmentCard');
+    const mainChartCard = document.getElementById('mainChartCard');
+    const ramCard = document.getElementById('ramBreakdownCard');
+    const ramCCard = document.getElementById('ramCompCard');
+    const ramH2Card = document.getElementById('ramH2Card');
+    document.getElementById('fySection').style.display = 'none';
+    document.getElementById('scenarioSection').style.display = 'none';
+    document.getElementById('kpiStrip').innerHTML = '';
+    document.getElementById('ramH2Inline').style.display = 'none';
+    if(mainChartCard) mainChartCard.style.display = 'none';
+    if(ramCard) ramCard.style.display = 'none';
+    if(ramCCard) ramCCard.style.display = 'none';
+    if(ramH2Card) ramH2Card.style.display = 'none';
+    if(invCard) { invCard.style.display = ''; renderInvestment(); }
+    return;
+  }
+  // Restore standard blocks if coming back from Investment
+  document.getElementById('fySection').style.display = '';
+  document.getElementById('scenarioSection').style.display = '';
+  const invCard2 = document.getElementById('investmentCard');
+  if(invCard2) invCard2.style.display = 'none';
+
+  const cfg=METRICS_CFG[currentMetric];
+  const d=ALL_DATA[currentCountry][currentMetric];
+  document.getElementById('chartTitle').textContent=currentMetric;
+  renderFY(d,cfg);
+  renderScenarios(d,cfg);
+  renderKPIs(d,cfg);
+
+  const sc=cfg.scale;
+  const ds25=d.a25.map(v=>v!==null?v/sc:null);
+  const ds26=d.a26.map(v=>v!==null?v/sc:null);
+  const dsSim=[...d.sim.map(v=>v!==null?v/sc:null)];
+  const dsTgt=d.tgt.map(v=>v!==null?v/sc:null);
+
+  const lastIdx=d.a26.map((v,i)=>v!==null?i:-1).filter(i=>i>=0).pop()??-1;
+  if(lastIdx>=0 && dsSim[lastIdx+1]!==null) dsSim[lastIdx]=ds26[lastIdx];
+
+  const {estFull}=calcEst(d);
+  const dsEst=estFull.map(v=>v!==null?v/sc:null);
+  if(lastIdx>=0) dsEst[lastIdx]=ds26[lastIdx];
+
+  // delta bars — YoY %
+  const dsDelta=MONTHS.map((_,i)=>{
+    const v26=d.a26[i]!==null?d.a26[i]:d.sim[i];
+    return(v26!==null&&d.a25[i]!==null&&d.a25[i]!==0)?((v26-d.a25[i])/Math.abs(d.a25[i])*100):null;
+  });
+  // left axis: suppress x suffix for Do/User
+  const leftSuffix=currentMetric==='Do/User'?'':cfg.suffix;
+
+  // hidden from legend
+  const hiddenLabels=[...document.querySelectorAll('#chartLegend .legend-item.hidden')].map(el=>el.dataset.label);
+
+  const datasets=[
+    {type:'bar',   label:'Δ vs 2025',     data:dsDelta,
+     backgroundColor:dsDelta.map(v=>v===null?'transparent':v>=0?'rgba(170,170,170,0.35)':'rgba(231,74,65,0.25)'),
+     borderColor:'transparent', borderWidth:0, yAxisID:'yRight', order:10},
+    {type:'line',  label:'Actuals 2025',  data:ds25,   borderColor:'#C3AFF2',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C3AFF2',tension:0.35,yAxisID:'yLeft',order:5},
+    {type:'line',  label:'Actuals 2026',  data:ds26,   borderColor:'#1F123F',borderWidth:2.5,pointRadius:4,pointBackgroundColor:'#1F123F',tension:0.35,yAxisID:'yLeft',order:4},
+
+    ...(SHOW_SIM ? [{type:'line', label:'Simulación B2C',data:dsSim, borderColor:'#7145D6',borderWidth:2,borderDash:[6,4],pointRadius:3,pointBackgroundColor:'#7145D6',tension:0.35,yAxisID:'yLeft',order:2,hidden:fyHidden.has('sim')}] : []),
+    {type:'line',  label:'Target',        data:dsTgt,  borderColor:'#EA8C2E',borderWidth:2,borderDash:[4,3],pointRadius:2.5,pointBackgroundColor:'#EA8C2E',tension:0.35,yAxisID:'yLeft',order:1,hidden:fyHidden.has('tgt')},
+  ].map(ds=>({backgroundColor:ds.backgroundColor||'transparent',...ds}));
+
+  // re-apply legend hidden state
+  datasets.forEach((ds,i)=>{
+    if(hiddenLabels.includes(ds.label)) ds.hidden=true;
+  });
+
+  const ctx=document.getElementById('mainChart').getContext('2d');
+  if(chart) chart.destroy();
+  chart=new Chart(ctx,{
+    data:{labels:MONTHS,datasets},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'rgba(31,18,63,0.92)',titleColor:'#EFE9FC',bodyColor:'#DDD2F8',
+          padding:12,cornerRadius:10,
+          callbacks:{
+            label(ctx){
+              const v=ctx.raw; if(v===null) return null;
+              if(ctx.dataset.label==='Δ vs 2025'){
+                return ` Δ vs 2025: ${v>=0?'+':''}${v.toFixed(1)}%`;
+              }
+              return ` ${ctx.dataset.label}: ${cfg.unit}${v.toFixed(cfg.decimals)}${leftSuffix}`;
+            }
+          }
+        }
+      },
+      scales:{
+        yLeft:{type:'linear',position:'left',grid:{color:'rgba(0,0,0,0.04)'},ticks:{color:'#717182',font:{size:11},callback:v=>cfg.unit+v.toFixed(cfg.decimals)+leftSuffix}},
+        yRight:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{color:'#aaaaaa',font:{size:10},callback:v=>(v>=0?'+':'')+v.toFixed(1)+'%'}},
+        x:{grid:{display:false},ticks:{color:'#717182',font:{size:11}}},
+      }
+    }
+  });
+
+  // update toggle-all button state
+  document.getElementById('fyToggleAll').textContent=fyHidden.size===3?'Mostrar todo':'Ocultar todo';
+
+  // Show AU RAM breakdown only when AU RAM metric is selected
+  const ramCard = document.getElementById('ramBreakdownCard');
+  const ramCCard = document.getElementById('ramCompCard');
+  const ramH2Card = document.getElementById('ramH2Card');
+  const invCard = document.getElementById('investmentCard');
+  const mainChartCard = document.getElementById('mainChartCard');
+
+  if(currentMetric === 'Investment') {
+    if(mainChartCard) mainChartCard.style.display = 'none';
+    ramCard.style.display = 'none';
+    if(ramCCard) ramCCard.style.display = 'none';
+    if(ramH2Card) ramH2Card.style.display = 'none';
+    document.getElementById('ramH2Inline').style.display = 'none';
+    if(invCard) { invCard.style.display = ''; renderInvestment(); }
+  } else {
+    if(invCard) invCard.style.display = 'none';
+    if(mainChartCard) mainChartCard.style.display = '';
+    if(currentMetric === 'AU RAM') {
+      ramCard.style.display = ''; renderRAMChart();
+      if(ramCCard) { ramCCard.style.display = ''; renderRAMCompChart(); }
+      renderRAMH2Targets();
+      document.getElementById('ramH2Inline').style.display = '';
+      if(ramH2Card) ramH2Card.style.display = 'none';
+    } else {
+      ramCard.style.display = 'none';
+      if(ramCCard) ramCCard.style.display = 'none';
+      if(ramH2Card) ramH2Card.style.display = 'none';
+      document.getElementById('ramH2Inline').style.display = 'none';
+    }
+  }
+}
+
+// ── COUNTRY TABS ─────────────────────────────────────────────────────────────
+const COUNTRIES=['ALL COUNTRIES','AR','ES','CO','CL','PE','UY'];
+const tabsEl=document.getElementById('countryTabs');
+COUNTRIES.forEach(c=>{
+  const t=document.createElement('div');
+  t.className='country-tab'+(c===currentCountry?' active':'');
+  t.textContent=c;
+  t.addEventListener('click',()=>{
+    document.querySelectorAll('.country-tab').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active'); currentCountry=c; render();
+  });
+  tabsEl.appendChild(t);
+});
+
+// ── METRIC PILLS ─────────────────────────────────────────────────────────────
+const pillsEl=document.getElementById('metricPills');
+Object.keys(METRICS_CFG).forEach(name=>{
+  const btn=document.createElement('button');
+  btn.className='metric-pill'+(name===currentMetric?' active':'');
+  btn.textContent=name;
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.metric-pill').forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active'); currentMetric=name; render();
+  });
+  pillsEl.appendChild(btn);
+});
+
+// ── LEGEND TOGGLE ─────────────────────────────────────────────────────────────
+document.getElementById('chartLegend').addEventListener('click',e=>{
+  const item=e.target.closest('[data-label]');
+  if(!item||!chart) return;
+  const idx=chart.data.datasets.findIndex(d=>d.label===item.dataset.label);
+  if(idx===-1) return;
+  chart._hidden[idx] = !chart._hidden[idx];
+  item.classList.toggle('hidden', chart._hidden[idx]);
+  chart.update();
+});
+
+
+// ── AU RAM BREAKDOWN ─────────────────────────────────────────────────────────
+let ramChart = null;
+const MONTHS5 = ['Ene','Feb','Mar','Abr','May'];
+const ramHidden = new Set();
+
+function fmtK(v) {
+  if (v === null || v === undefined) return '—';
+  const abs = Math.abs(v);
+  if (abs >= 1e6) return (v/1e6).toFixed(1)+'M';
+  if (abs >= 1e3) return Math.round(v/1e3)+'K';
+  return Math.round(v).toString();
+}
+
+function renderRAMKPIs(rd) {
+  const m = ['Ene','Feb','Mar','Abr','May'];
+  let html = '';
+  for (let i = 0; i < 5; i++) {
+    const ram25 = rd.a25_ram[i], ram26 = rd.a26_ram[i];
+    const new25 = rd.a25_new[i], new26 = rd.a26_new[i];
+    const react25 = rd.a25_react[i], react26 = rd.a26_react[i];
+    const churn25 = rd.a25_churn[i], churn26 = rd.a26_churn[i];
+    const ramYoY = (ram25 && ram26) ? ((ram26-ram25)/Math.abs(ram25)*100) : null;
+    const newYoY = (new25 && new26) ? ((new26-new25)/Math.abs(new25)*100) : null;
+    const reactYoY = (react25 && react26) ? ((react26-react25)/Math.abs(react25)*100) : null;
+    const churnYoY = (churn25 && churn26) ? ((Math.abs(churn26)-Math.abs(churn25))/Math.abs(churn25)*100) : null;
+    const chRate25 = (ram25 && churn25) ? (Math.abs(churn25)/ram25*100) : null;
+    const chRate26 = (ram26 && churn26) ? (Math.abs(churn26)/ram26*100) : null;
+    const badge = (v, down=false) => {
+      if (v===null) return '';
+      const up = down ? v<=0 : v>=0;
+      return `<span class="kpi-badge ${up?'up':'down'}" style="font-size:9px;padding:1px 5px;">${v>=0?'+':''}${v.toFixed(1)}%</span>`;
+    };
+    html += `<div style="background:var(--m0);border-radius:10px;padding:10px 14px;border:1px solid var(--m10);">
+      <div style="font-size:10px;font-weight:700;color:var(--gray-n60);letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px;">${m[i]}</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <div><div style="font-size:9px;color:var(--gray-n60);">AU RAM</div>
+          <div style="font-size:13px;font-weight:800;color:var(--m80);">${fmtK(ram26)}</div>
+          ${badge(ramYoY)} <span style="font-size:9px;color:var(--gray-n60);">YoY</span></div>
+        <div><div style="font-size:9px;color:var(--gray-n60);">New</div>
+          <div style="font-size:12px;font-weight:700;color:#0C936B;">${fmtK(new26)}</div>
+          ${badge(newYoY)}</div>
+        <div><div style="font-size:9px;color:var(--gray-n60);">React.</div>
+          <div style="font-size:12px;font-weight:700;color:var(--m60);">${fmtK(react26)}</div>
+          ${badge(reactYoY)}</div>
+        <div><div style="font-size:9px;color:var(--gray-n60);">Tasa churn</div>
+          <div style="font-size:12px;font-weight:700;color:var(--red);">${chRate26!==null?chRate26.toFixed(1)+'%':'—'}</div>
+          ${(chRate26!==null&&chRate25!==null)?`<span class="kpi-badge ${chRate26<=chRate25?'up':'down'}" style="font-size:9px;padding:1px 5px;">${chRate26>=chRate25?'+':''}${(chRate26-chRate25).toFixed(2)}pp</span>`:''}</div>
+      </div>
+    </div>`;
+  }
+  document.getElementById('ramKpis').innerHTML = html;
+}
+
+function renderRAMChart() {
+  const rd = AU_RAM_DATA[currentCountry];
+  if (!rd) return;
+
+  // 4 month labels — each has 2 stacked bars (y25 left, y26 right)
+  const labels = MONTHS5;
+  const sc25 = arr => arr.slice(0,5).map(v=>v!==null?v/1e3:null);
+  const sc26 = arr => arr.slice(0,5).map(v=>v!==null?v/1e3:null);
+
+  const datasets = [
+    // --- Recurrent ---
+    {label:'Recurrent 25', stack:'y25', data:sc25(rd.a25_recur),
+     backgroundColor:'rgba(195,175,242,0.85)', hidden: ramHidden.has('recur')},
+    {label:'Recurrent 26', stack:'y26', data:sc26(rd.a26_recur),
+     backgroundColor:'rgba(113,69,214,0.80)', hidden: ramHidden.has('recur')},
+    // --- Reactivated ---
+    {label:'Reactivated 25', stack:'y25', data:sc25(rd.a25_react),
+     backgroundColor:'rgba(195,175,242,0.5)', hidden: ramHidden.has('react')},
+    {label:'Reactivated 26', stack:'y26', data:sc26(rd.a26_react),
+     backgroundColor:'rgba(113,69,214,0.45)', hidden: ramHidden.has('react')},
+    // --- New ---
+    {label:'New 25', stack:'y25', data:sc25(rd.a25_new),
+     backgroundColor:'rgba(12,147,107,0.4)', hidden: ramHidden.has('new')},
+    {label:'New 26', stack:'y26', data:sc26(rd.a26_new),
+     backgroundColor:'rgba(12,147,107,0.9)', hidden: ramHidden.has('new')},
+    // --- Churn (negative) ---
+    {label:'Churn 25', stack:'y25', data:sc25(rd.a25_churn).map(v=>v!==null?v:null),
+     backgroundColor:'rgba(231,74,65,0.3)', hidden: ramHidden.has('churn')},
+    {label:'Churn 26', stack:'y26', data:sc26(rd.a26_churn),
+     backgroundColor:'rgba(231,74,65,0.8)', hidden: ramHidden.has('churn')},
+  ];
+
+  const ctx = document.getElementById('ramChart').getContext('2d');
+  if (ramChart) ramChart.destroy();
+  ramChart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      layout:{padding:{top:30}},
+      interaction: { mode:'index', intersect:false },
+      plugins: {
+        legend: { display:false },
+        tooltip: {
+          backgroundColor:'rgba(31,18,63,0.92)', titleColor:'#EFE9FC', bodyColor:'#DDD2F8',
+          padding:10, cornerRadius:8,
+          callbacks: {
+            label(ctx) {
+              const v = ctx.raw; if(v===null) return null;
+              return ` ${ctx.dataset.label}: ${v>=0?'':''}${v.toFixed(1)}K`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid:{display:false}, ticks:{color:'#717182',font:{size:10}} },
+        y: { grid:{color:'rgba(0,0,0,0.04)'}, ticks:{color:'#717182',font:{size:10},
+             callback: v => Math.abs(v) >= 1000 ? (v/1000).toFixed(1)+'M' : Math.round(v)+'K'} }
+      }
+    },
+    plugins:[{
+      id:'ramLabels',
+      afterDraw(chart){
+        const ctx = chart.ctx;
+        const n = chart.data.labels.length;
+        for(let i=0; i<n; i++){
+          ['y25','y26'].forEach(stackId=>{
+            const sds = chart.data.datasets.map((ds,di)=>({ds,di}))
+              .filter(({ds})=>ds.stack===stackId && !ds.hidden);
+            if(!sds.length) return;
+            const meta0 = chart.getDatasetMeta(sds[0].di);
+            if(!meta0.data[i]) return;
+            const x = meta0.data[i].x;
+            // sum positive values
+            const total = sds.reduce((s,{ds})=>{const v=ds.data[i]; return s+(v!==null&&v>0?v:0);},0);
+            if(!total) return;
+            // top y (min y = highest point on canvas)
+            let topY = Infinity;
+            sds.forEach(({di})=>{ const m=chart.getDatasetMeta(di); if(m.data[i]) topY=Math.min(topY,m.data[i].y); });
+            if(topY===Infinity) return;
+            const lbl = total>=1000?(total/1000).toFixed(1)+'M':Math.round(total)+'K';
+            ctx.save();
+            ctx.textAlign='center';
+            if(stackId==='y26'){
+              // compute YoY vs y25
+              const sds25=chart.data.datasets.map((ds,di)=>({ds,di})).filter(({ds})=>ds.stack==='y25'&&!ds.hidden);
+              const t25=sds25.reduce((s,{ds})=>{const v=ds.data[i];return s+(v!==null&&v>0?v:0);},0);
+              const yoy=t25?((total-t25)/t25*100):null;
+              ctx.font='700 10px Montserrat,sans-serif';
+              ctx.fillStyle='#1F123F';
+              ctx.fillText(lbl, x, topY-20);
+              if(yoy!==null){
+                ctx.font='700 9px Montserrat,sans-serif';
+                ctx.fillStyle=yoy>=0?'#0C936B':'#E74A41';
+                ctx.fillText((yoy>=0?'+':'')+yoy.toFixed(1)+'%', x, topY-9);
+              }
+            } else {
+              ctx.font='600 9px Montserrat,sans-serif';
+              ctx.fillStyle='#aaaaaa';
+              ctx.fillText(lbl, x, topY-6);
+            }
+            ctx.restore();
+          });
+        }
+      }
+    }]
+  });
+}
+
+// Legend toggle for RAM chart
+document.getElementById('ramLegend').addEventListener('click', e => {
+  const item = e.target.closest('[data-rl]');
+  if (!item) return;
+  const key = item.dataset.rl;
+  if (ramHidden.has(key)) ramHidden.delete(key); else ramHidden.add(key);
+  item.classList.toggle('hidden', ramHidden.has(key));
+  renderRAMChart();
+});
+
+// ── RAM H2 TARGETS ───────────────────────────────────────────────────────────
+function renderRAMH2Targets() {
+  const cd = RAM_COMP_DATA[currentCountry];
+  const rd = AU_RAM_DATA[currentCountry];
+  if (!cd || !rd) return;
+
+  const comps = [
+    { key:'New',        label:'New',         color:'#0C936B', neg:false },
+    { key:'Reactivated',label:'Reactivated', color:'#7145D6', neg:false },
+    { key:'Recurrent',  label:'Recurrent',   color:'#C3AFF2', neg:false },
+    { key:'Churn',      label:'Churn (tasa)',color:'#E74A41', neg:true  },
+  ];
+
+  // Render into inline placeholder (below kpiStrip) when AU RAM
+  const inlineEl = document.getElementById('ramH2Inline');
+  const strip = inlineEl || document.getElementById('ramH2Strip');
+  if (inlineEl) {
+    inlineEl.innerHTML = '<div style="font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--gray-n60);margin-bottom:8px;">Objetivos H2 · Componentes RAM (Jul–Dic)</div><div id="ramH2StripInner" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>';
+  }
+  const targetEl = inlineEl ? document.getElementById('ramH2StripInner') : strip;
+  targetEl.innerHTML = comps.map(c => {
+    const md = cd[c.key];
+    if (!md) return '';
+
+    // H2 target (Jul-Dic = indices 6-11)
+    const tgtH2 = md.tgt.slice(6).filter(v => v !== null);
+    const tgt25H2 = md.a25.slice(6).filter(v => v !== null);
+
+    let tgtVal, tgt25Val, ytdVal, ytd25Val;
+
+    if (c.neg) {
+      // Churn: show avg rate over H2
+      const ramBase26 = rd.tgt_ram.slice(6).filter(v => v !== null);  // usar tgt_ram como base H2 (a26_ram solo tiene ene-may)
+      const ramBase25 = rd.a25_ram.slice(6).filter(v => v !== null);
+      const churnH2Tgt = md.tgt.slice(6).filter(v => v !== null);
+      const churnH2_25 = md.a25.slice(6).filter(v => v !== null);
+      const avgRate26 = (churnH2Tgt.length && ramBase26.length)
+        ? churnH2Tgt.reduce((s,v,i) => s + (ramBase26[i] ? Math.abs(v)/ramBase26[i] : 0), 0) / churnH2Tgt.length * 100
+        : null;
+      const avgRate25 = (churnH2_25.length && ramBase25.length)
+        ? churnH2_25.reduce((s,v,i) => s + (ramBase25[i] ? Math.abs(v)/ramBase25[i] : 0), 0) / churnH2_25.length * 100
+        : null;
+
+      // YTD actuals churn rate
+      const ytdChurn = rd.a26_churn.filter(v=>v!==null);
+      const ytdRamBase = rd.a26_ram.slice(0, ytdChurn.length);
+      const ytdRate = ytdChurn.length
+        ? ytdChurn.reduce((s,v,i) => s + (ytdRamBase[i] ? Math.abs(v)/ytdRamBase[i] : 0), 0) / ytdChurn.length * 100
+        : null;
+      const ytdChurn25 = rd.a25_churn.filter(v=>v!==null);
+      const ytdRamBase25 = rd.a25_ram.slice(0, ytdChurn25.length);
+      const ytdRate25 = ytdChurn25.length
+        ? ytdChurn25.reduce((s,v,i) => s + (ytdRamBase25[i] ? Math.abs(v)/ytdRamBase25[i] : 0), 0) / ytdChurn25.length * 100
+        : null;
+
+      const diff = (avgRate26 !== null && avgRate25 !== null) ? avgRate26 - avgRate25 : null;
+      const ytdDiff = (ytdRate !== null && ytdRate25 !== null) ? ytdRate - ytdRate25 : null;
+      const good = diff !== null && diff <= 0;
+      const manualTgt = CHURN_H2_TGT_RATE[currentCountry] || null;
+
+      const churnObjText = currentCountry === 'ES' ? 'Objetivo: Mejorar tasa 1.7 pp' : currentCountry === 'AR' ? 'Objetivo: Mejorar tasa 0.8 pp' : 'Objetivo: Mantener tasa de churn';
+      return `<div style="background:white;border-radius:11px;padding:12px 14px;border:1px solid var(--m10);border-top:3px solid ${c.color};">
+        <div style="font-size:9px;color:var(--gray-n60);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">${c.label}</div>
+        <div style="font-size:13px;font-weight:700;color:${c.color};margin:4px 0 2px;">${churnObjText}</div>
+        ${ytdRate !== null && ytdRate25 !== null ? `<div style="font-size:10px;color:var(--gray-n60);margin-top:8px;padding-top:6px;border-top:1px solid var(--m10);">YTD actual: <strong>${ytdRate.toFixed(2)}%</strong> <span style="color:${ytdDiff<=0?'var(--green)':'var(--red)'};">${ytdDiff>=0?'+':''}${ytdDiff.toFixed(2)} pp YoY</span></div>` : ''}
+      </div>`;
+    } else {
+      // New / Reactivated / Recurrent: absolute values
+      tgtVal  = tgtH2.length  ? tgtH2.reduce((a,b)=>a+b,0)/tgtH2.length   : null;
+      tgt25Val= tgt25H2.filter(v=>v!==null).length ? tgt25H2.filter(v=>v!==null).reduce((a,b)=>a+b,0)/tgt25H2.filter(v=>v!==null).length : null;
+      const ytdArr = md.a26.filter(v=>v!==null);
+      const ytdArr25 = md.a25.slice(0, ytdArr.length).filter(v=>v!==null);
+      ytdVal  = ytdArr.length  ? ytdArr.reduce((a,b)=>a+b,0)/ytdArr.length   : null;
+      ytd25Val= ytdArr25.length? ytdArr25.reduce((a,b)=>a+b,0)/ytdArr25.length: null;
+
+      const yoy = (tgtVal && tgt25Val) ? (tgtVal-tgt25Val)/Math.abs(tgt25Val)*100 : null;
+      const ytdYoY = (ytdVal && ytd25Val) ? (ytdVal-ytd25Val)/Math.abs(ytd25Val)*100 : null;
+
+      const arTargetText = currentCountry === 'AR'
+        ? (c.key === 'New' ? 'Objetivo: flat (0% YoY)' : c.key === 'Reactivated' ? 'Objetivo: +20% YoY' : '')
+        : '';
+      return `<div style="background:white;border-radius:11px;padding:12px 14px;border:1px solid var(--m10);border-top:3px solid ${c.color};">
+        <div style="font-size:9px;color:var(--gray-n60);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">${c.label}</div>
+        ${arTargetText ? `<div style="font-size:13px;font-weight:700;color:${c.color};margin:4px 0 2px;">${arTargetText}</div>` : ''}
+        <div style="font-size:20px;font-weight:800;color:${c.color};">${tgtVal !== null ? fmtK(tgtVal) : '—'}</div>
+        <div style="font-size:10px;color:var(--gray-n60);margin:2px 0;">Media mensual H2 Target</div>
+        ${ytdYoY !== null ? `<div style="font-size:10px;color:var(--gray-n60);margin-top:8px;padding-top:6px;border-top:1px solid var(--m10);">YTD actual: <span style="font-weight:700;color:${ytdYoY>=0?'var(--green)':'var(--red)'};">${ytdYoY>=0?'+':''}${ytdYoY.toFixed(1)}% YoY</span></div>` : ''}
+      </div>`;
+    }
+  }).join('');
+}
+
+// ── PER-COUNTRY INSIGHTS ──────────────────────────────────────────────────────
+
+
+
+// ── RAM COMPONENT CHART ───────────────────────────────────────────────────────
+let ramCompChart = null;
+let currentRamComp = 'New';
+const MONTHS_FULL = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+function fmtCompVal(v, metric) {
+  if (v === null || v === undefined) return '—';
+  const abs = Math.abs(v);
+  if (abs >= 1e6) return (v/1e6).toFixed(2)+'M';
+  if (abs >= 1e3) return (v/1e3).toFixed(1)+'K';
+  return Math.round(v).toString();
+}
+
+function renderRAMCompChart() {
+  const cd = RAM_COMP_DATA[currentCountry];
+  if (!cd) return;
+  const md = cd[currentRamComp];
+  if (!md) return;
+
+  const isChurn = currentRamComp === 'Churn';
+  const churnH2TgtRate = isChurn ? (CHURN_H2_TGT_RATE[currentCountry] || null) : null;
+  const churnH2Seasonal = isChurn ? (CHURN_H2_SEASONAL[currentCountry] || null) : null;
+
+  document.getElementById('ramCompTitle').textContent =
+    currentRamComp + (isChurn ? ' (tasa %)' : '') + ' · Evolución mensual';
+  const rd4rate = AU_RAM_DATA[currentCountry];
+
+  function toRate(arr, base) {
+    return arr.map((v,i) => {
+      if (v===null) return null;
+      const b = base ? base[i] : null;
+      return b ? Math.abs(v)/b*100 : null;
+    });
+  }
+  function toK(arr) { return arr.map(v => v!==null ? v/1e3 : null); }
+
+  const ds25   = isChurn ? toRate(md.a25, rd4rate ? rd4rate.a25_ram : null)
+                         : toK(md.a25);
+  const ds26   = isChurn ? toRate(md.a26, rd4rate ? rd4rate.a26_ram : null)
+                         : toK(md.a26);
+  const dsTgt  = isChurn ? toRate(md.tgt, rd4rate ? rd4rate.a26_ram : null)
+                         : toK(md.tgt);
+  const dsMod  = isChurn ? toRate(md.model, rd4rate ? rd4rate.a26_ram : null)
+                         : toK(md.model);
+
+  const rch = typeof ramCompHidden !== 'undefined' ? ramCompHidden : new Set();
+  const datasets = [
+    {label:'2025',   data:rch.has('a25')?ds25.map(()=>null):ds25,  borderColor:'#C3AFF2', borderWidth:2, pointRadius:3,
+     pointBackgroundColor:'#C3AFF2', tension:0.35, fill:false},
+    {label:'2026',   data:rch.has('a26')?ds26.map(()=>null):ds26,  borderColor:'#1F123F', borderWidth:2.5, pointRadius:4,
+     pointBackgroundColor:'#1F123F', tension:0.35, fill:false},
+  ].map(d => ({...d, backgroundColor:'transparent', spanGaps:false}));
+
+  const isNeg = currentRamComp === 'Churn';
+  const ctx = document.getElementById('ramCompChart').getContext('2d');
+  if (ramCompChart) ramCompChart.destroy();
+  ramCompChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels: MONTHS_FULL, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode:'index', intersect:false },
+      plugins: {
+        legend: { display:false },
+        tooltip: {
+          backgroundColor:'rgba(31,18,63,0.92)', titleColor:'#EFE9FC', bodyColor:'#DDD2F8',
+          padding:10, cornerRadius:8,
+          callbacks: {
+            label(ctx) {
+              const v = ctx.raw;
+              if (v === null) return null;
+              const fmt = isChurn
+                ? v.toFixed(2)+'%'
+                : (Math.abs(v) >= 1000 ? (v/1000).toFixed(1)+'M' : v.toFixed(1)+'K');
+              return ` ${ctx.dataset.label}: ${fmt}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid:{display:false}, ticks:{color:'#717182',font:{size:11}} },
+        y: { grid:{color:'rgba(0,0,0,0.04)'},
+             ticks:{color:'#717182',font:{size:10},
+               callback: v => isChurn
+                 ? (v!==0?v.toFixed(1)+'%':'0%')
+                 : (Math.abs(v)>=1000?(v/1000).toFixed(1)+'M':Math.round(v)+'K')} }
+      }
+    }
+  });
+}
+
+// Pill clicks for component selector
+document.getElementById('ramCompPills').addEventListener('click', e => {
+  const btn = e.target.closest('[data-comp]');
+  if (!btn) return;
+  document.querySelectorAll('#ramCompPills .metric-pill').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentRamComp = btn.dataset.comp;
+  renderRAMCompChart();
+});
+
+// Scenario legend toggle for component chart
+const ramCompHidden = new Set();
+document.getElementById('ramCompLegend').addEventListener('click', e => {
+  const item = e.target.closest('[data-rscen]');
+  if (!item) return;
+  const k = item.dataset.rscen;
+  if (ramCompHidden.has(k)) ramCompHidden.delete(k); else ramCompHidden.add(k);
+  item.classList.toggle('hidden', ramCompHidden.has(k));
+  renderRAMCompChart();
+});
+
+// Collapse/expand component chart
+let ramCompCollapsed = false;
+function toggleFyBlock() {
+  const body = document.getElementById('fyBody');
+  const btn  = document.getElementById('fyToggleBlock');
+  const hidden = body.style.display === 'none';
+  body.style.display = hidden ? '' : 'none';
+  btn.textContent = hidden ? 'Ocultar bloque' : 'Mostrar bloque';
+}
+function toggleRamH2() {
+  const body = document.getElementById('ramH2Body');
+  const btn  = document.getElementById('ramH2Toggle');
+  const hidden = body.style.display === 'none';
+  body.style.display = hidden ? '' : 'none';
+  btn.textContent = hidden ? 'Ocultar' : 'Mostrar';
+}
+function toggleRamBreakdown() {
+  const card = document.getElementById('ramBreakdownCard');
+  const btn  = document.getElementById('ramBreakdownToggle');
+  const area = card.querySelector('.chart-area');
+  const note = card.querySelector('.note');
+  const hidden = area.style.display === 'none';
+  area.style.display = hidden ? '' : 'none';
+  if (note) note.style.display = hidden ? '' : 'none';
+  btn.textContent = hidden ? 'Ocultar' : 'Mostrar';
+}
+function toggleRamComp() {
+  ramCompCollapsed = !ramCompCollapsed;
+  const area = document.querySelector('#ramCompCard .chart-area');
+  const note = document.querySelector('#ramCompCard .note');
+  const btn  = document.getElementById('ramCompToggle');
+  if (area) area.style.display = ramCompCollapsed ? 'none' : '';
+  if (note) note.style.display = ramCompCollapsed ? 'none' : '';
+  if (btn)  btn.textContent = ramCompCollapsed ? 'Mostrar' : 'Ocultar';
+}
+
+function toggleReadme() {
+  const panel = document.getElementById('readmePanel');
+  const main  = document.getElementById('mainContent');
+  const tab   = document.getElementById('readmeTab');
+  const isOpen = panel.classList.contains('visible');
+  panel.classList.toggle('visible', !isOpen);
+  main.style.display = isOpen ? '' : 'none';
+  tab.classList.toggle('active', !isOpen);
+}
+
+
+// ── INVESTMENT RENDER ─────────────────────────────────────────────────────
+function fmtEur(v) {
+  if (v === null || v === undefined) return '—';
+  const abs = Math.abs(v);
+  if (abs >= 1e6) return (v/1e6).toFixed(2) + 'M€';
+  if (abs >= 1e3) return Math.round(v/1e3) + 'K€';
+  return Math.round(v) + '€';
+}
+function fmtPctInv(v) { return (v*100).toFixed(1)+'%'; }
+
+function renderInvestment() {
+  const key = currentCountry;
+  const d = INVESTMENT_DATA[key];
+  const wrap = document.getElementById('invTableWrap');
+  if (!d) { wrap.innerHTML = '<p style="color:var(--gray-n60);padding:12px;">Sin datos para '+key+'</p>'; return; }
+
+  const cols = [
+    {label:'YTD 2025 (Ene–May)', k:'ytd25'},
+    {label:'YTD 2026 (Ene–May)', k:'ytd'},
+  ];
+  const rows = [
+    {label:'Total Inversión Rider', fn: p=>`<strong>${fmtEur(p.inv)}</strong>`, indent:false, bold:true, bg:'var(--m10)'},
+    {label:'Brand / O&A',           fn: p=>`${fmtEur(p.brand)} <span style="color:var(--gray-n60);font-size:11px;">(${fmtPctInv(p.pct_brand)})</span>`, indent:true},
+    {label:'Acquisition',           fn: p=>`${fmtEur(p.acq)} <span style="color:var(--gray-n60);font-size:11px;">(${fmtPctInv(p.pct_acq)})</span>`, indent:true},
+    {label:'Engagement',            fn: p=>`${fmtEur(p.eng)} <span style="color:var(--gray-n60);font-size:11px;">(${fmtPctInv(p.pct_eng)})</span>`, indent:true},
+    {label:'Descuentos',            fn: p=>`${fmtEur(p.disc)} <span style="color:var(--gray-n60);font-size:11px;">(${fmtPctInv(p.pct_disc)} GMV)</span>`, indent:false, bold:true, bg:'#FFF8F0'},
+    {label:'GMV B2C (referencia)',  fn: p=>`<span style="color:var(--gray-n60)">${fmtEur(p.gmv)}</span>`, indent:false, italic:true},
+  ];
+
+  let t = `<table style="width:100%;border-collapse:collapse;font-size:13px;">
+  <thead><tr>
+    <th style="text-align:left;padding:8px 10px;color:var(--gray-n60);font-weight:600;border-bottom:2px solid var(--m60);">Partida</th>
+    ${cols.map(c=>`<th style="text-align:right;padding:8px 10px;color:var(--gray-n60);font-weight:600;border-bottom:2px solid var(--m60);">${c.label}</th>`).join('')}
+  </tr></thead>
+  <tbody>
+  ${rows.map((row,ri)=>{
+    const bg = row.bg ? `background:${row.bg};` : (ri%2===0?'':'background:#FAF8FE;');
+    const labelPad = row.indent ? 'padding-left:28px;' : 'padding-left:10px;';
+    const boldSt = row.bold ? 'font-weight:700;' : '';
+    const italicSt = row.italic ? 'font-style:italic;color:var(--gray-n60);' : '';
+    return `<tr style="${bg}">
+      <td style="padding:7px 10px;${labelPad}${boldSt}${italicSt}border-bottom:1px solid #EDE8FA;">${row.label}</td>
+      ${cols.map(col=>{
+        const p=d[col.k];
+        const val = p ? row.fn(p) : '<span style="color:#ccc">—</span>';
+        return `<td style="text-align:right;padding:7px 10px;${boldSt}${italicSt}border-bottom:1px solid #EDE8FA;">${val}</td>`;
+      }).join('')}
+    </tr>`;
+  }).join('')}
+  </tbody>
+  </table>`;
+  wrap.innerHTML = t;
+}
+
+render();
+</script>
+</body>
+</html>                                                                                                                                                                                                                                                                             
