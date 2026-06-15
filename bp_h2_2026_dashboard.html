@@ -1,0 +1,2794 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Business Plan H2 2026</title>
+  <script>
+// TinyChart v2 — Chart.js 4 compatible, self-contained
+(function(root){
+'use strict';
+var TC=function(ctx,cfg){
+  this.ctx=ctx; this.canvas=ctx.canvas;
+  this.config=cfg; this.data=cfg.data||{labels:[],datasets:[]};
+  this.options=cfg.options||{}; this._plugins=cfg.plugins||[];
+  this._hidden={}; this._meta={}; this._tipEl=null; this._ro=null;
+  // Size canvas to container
+  var par=this.canvas.parentElement;
+  if(par){this.canvas.style.width='100%';this.canvas.style.height='100%';}
+  this._render(); this._wire();
+};
+TC.prototype.destroy=function(){
+  if(this._ro)this._ro.disconnect();
+  this.canvas.onmousemove=null; this.canvas.onmouseleave=null;
+  this.ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
+};
+TC.prototype.update=function(){this._render();};
+TC.prototype.getDatasetMeta=function(i){
+  return this._meta[i]||{data:Array.from({length:(this.data.labels||[]).length},function(){return{x:0,y:0,base:0};}),hidden:!!this._hidden[i]};
+};
+TC.prototype._wire=function(){
+  var self=this,last=-1;
+  if(typeof ResizeObserver!=='undefined'){
+    self._ro=new ResizeObserver(function(){self._render();});
+    self._ro.observe(self.canvas.parentElement||self.canvas);
+  }
+  function onMove(e){
+    var r=self.canvas.getBoundingClientRect(),mx=e.clientX-r.left;
+    var n=(self.data.labels||[]).length; if(!n||!self._plotW)return;
+    var idx=Math.floor((mx-self._padL)/self._plotW*n);
+    if(idx<0||idx>=n)idx=-1;
+    if(idx!==last){last=idx;self._render(idx);}
+  }
+  function onLeave(){last=-1;self._render(-1);}
+  this.canvas.onmousemove=onMove; this.canvas.onmouseleave=onLeave;
+};
+// Bezier smoothing (Catmull-Rom)
+function drawSmooth(ctx,pts,tension){
+  if(!pts.length)return;
+  ctx.moveTo(pts[0].x,pts[0].y);
+  for(var k=1;k<pts.length;k++){
+    var p0=pts[k-2]||pts[k-1],p1=pts[k-1],p2=pts[k],p3=pts[k+1]||p2;
+    var cp1x=p1.x+(p2.x-p0.x)*tension/3,cp1y=p1.y+(p2.y-p0.y)*tension/3;
+    var cp2x=p2.x-(p3.x-p1.x)*tension/3,cp2y=p2.y-(p3.y-p1.y)*tension/3;
+    ctx.bezierCurveTo(cp1x,cp1y,cp2x,cp2y,p2.x,p2.y);
+  }
+}
+// Compact tick formatter: max ~4 chars
+function fmtTick(v,cb){
+  if(cb)return cb(v);
+  var a=Math.abs(v);
+  if(a>=1e6)return(v/1e6).toFixed(a>=10e6?1:2)+'M';
+  if(a>=1e3)return(v/1e3).toFixed(a>=100e3?1:a>=10e3?1:1)+'K';
+  return v.toFixed(Math.abs(v)<10?2:1);
+}
+TC.prototype._render=function(hoverIdx){
+  var cv=this.canvas,ctx=this.ctx;
+  var par=cv.parentElement;
+  var W=par?par.clientWidth:cv.offsetWidth||800;
+  var H=par?par.clientHeight:cv.offsetHeight||300;
+  if(W<10)W=800; if(H<10)H=300;
+  var dpr=root.devicePixelRatio||1;
+  cv.width=W*dpr; cv.height=H*dpr;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,W,H);
+  var datasets=this.data.datasets||[],labels=this.data.labels||[];
+  var N=labels.length; if(!N)return;
+  var scales=this.options.scales||{};
+  var yL=scales.yLeft||scales.y||null,yR=scales.yRight||null;
+  var hasR=!!yR;
+  var padT=(this.options.layout&&this.options.layout.padding&&this.options.layout.padding.top)||24;
+  var padB=34,padL=yL?60:12,padR=hasR?58:16;
+  var PW=W-padL-padR,PH=H-padT-padB;
+  this._padL=padL; this._plotW=PW;
+  if(PW<20||PH<20)return;
+  var step=PW/N;
+  // Collect stacks
+  var stacks={};
+  datasets.forEach(function(d,i){if(d.stack){stacks[d.stack]=stacks[d.stack]||[];stacks[d.stack].push(i);}});
+  var isStacked=Object.keys(stacks).length>0;
+  // Axis ranges
+  function getRange(idxs,stk){
+    var mn=Infinity,mx=-Infinity;
+    if(stk){
+      for(var k in stacks){for(var j=0;j<N;j++){var p=0,n2=0;stacks[k].forEach(function(di){if(this._hidden[di])return;var v=datasets[di].data[j];if(v!=null){if(v>=0)p+=v;else n2+=v;}}.bind(this));mn=Math.min(mn,n2);mx=Math.max(mx,p);}}} 
+    else idxs.forEach(function(i){if(this._hidden[i])return;(datasets[i].data||[]).forEach(function(v){if(v!=null){mn=Math.min(mn,v);mx=Math.max(mx,v);}});}.bind(this));
+    if(!isFinite(mn)){mn=0;mx=1;}if(mn===mx){mn-=1;mx+=1;}
+    var r=mx-mn;mn-=r*0.04;mx+=r*0.18;return{min:mn,max:mx};
+  }
+  var lIdxs=[],rIdxs=[];
+  datasets.forEach(function(d,i){(d.yAxisID==='yRight'?rIdxs:lIdxs).push(i);});
+  var lR=getRange.call(this,lIdxs,isStacked);
+  var rR=hasR?getRange.call(this,rIdxs,false):null;
+  function toYL(v){return padT+PH-(v-lR.min)/(lR.max-lR.min)*PH;}
+  function toYR(v){return rR?padT+PH-(v-rR.min)/(rR.max-rR.min)*PH:padT;}
+  function toY(d,v){return d.yAxisID==='yRight'?toYR(v):toYL(v);}
+  var y0L=toYL(Math.max(lR.min,Math.min(0,lR.max)));
+  // Grid & axes
+  var gcol=(yL&&yL.grid&&yL.grid.color)||'rgba(0,0,0,0.045)';
+  for(var g=0;g<=5;g++){
+    var gy=padT+PH*g/5;
+    ctx.strokeStyle=gcol;ctx.lineWidth=1;ctx.setLineDash([]);
+    ctx.beginPath();ctx.moveTo(padL,gy);ctx.lineTo(padL+PW,gy);ctx.stroke();
+    var lv=lR.max-(lR.max-lR.min)*g/5;
+    if(yL||!hasR){ctx.fillStyle='#717182';ctx.font='10px Montserrat,sans-serif';ctx.textAlign='right';ctx.fillText(fmtTick(lv,yL&&yL.ticks&&yL.ticks.callback),padL-6,gy+4);}
+    if(hasR&&rR){var rv=rR.max-(rR.max-rR.min)*g/5;ctx.fillStyle='#aaa';ctx.textAlign='left';ctx.fillText(fmtTick(rv,yR&&yR.ticks&&yR.ticks.callback),padL+PW+6,gy+4);}
+  }
+  ctx.strokeStyle='rgba(0,0,0,0.08)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(padL,y0L);ctx.lineTo(padL+PW,y0L);ctx.stroke();
+  ctx.fillStyle='#717182';ctx.font='11px Montserrat,sans-serif';ctx.textAlign='center';
+  labels.forEach(function(l,i){ctx.fillText(l,padL+(i+0.5)*step,padT+PH+22);});
+  // Stacked bars
+  if(isStacked){
+    var skeys=Object.keys(stacks),ns=skeys.length;
+    var bw=step*0.72/ns; this._meta={};
+    skeys.forEach(function(sk,gi){
+      var off=(gi-ns/2+0.5)*bw;
+      for(var j=0;j<N;j++){
+        var cx=padL+(j+0.5)*step+off,posY=y0L,negY=y0L;
+        stacks[sk].forEach(function(di){
+          if(this._hidden[di])return;
+          var v=datasets[di].data[j];if(v==null)return;
+          var h=Math.abs(v)/(lR.max-lR.min)*PH,yS,yE;
+          if(v>=0){yS=posY;yE=posY-h;posY=yE;}else{yS=negY;yE=negY+h;negY=yE;}
+          var bg=datasets[di].backgroundColor;if(typeof bg==='function')bg=bg(v);else if(Array.isArray(bg))bg=bg[j]||'#888';
+          ctx.fillStyle=bg||'#888';ctx.fillRect(cx-bw/2,Math.min(yS,yE),bw,Math.max(1,Math.abs(yE-yS)));
+          if(!this._meta[di])this._meta[di]={data:[],hidden:false};
+          this._meta[di].data[j]={x:cx,y:Math.min(yS,yE),base:Math.max(yS,yE)};
+        }.bind(this));
+      }
+    }.bind(this));
+  }
+  // Non-stacked bars
+  var bDsets=datasets.map(function(d,i){return{d:d,i:i};}).filter(function(x){return !x.d.stack&&(x.d.type==='bar'||(this.config.type==='bar'&&!x.d.type));}.bind(this));
+  var nb=bDsets.length;
+  bDsets.forEach(function(x,bi){
+    if(this._hidden[x.i])return;
+    var d=x.d,bw2=step*0.7/Math.max(nb,1),off2=(bi-nb/2+0.5)*bw2;
+    d.data.forEach(function(v,j){
+      if(v==null)return;
+      var cx=padL+(j+0.5)*step+off2,yv=toY(d,v);
+      var yb=d.yAxisID==='yRight'?toYR(Math.max(rR&&rR.min||0,Math.min(0,rR&&rR.max||0))):y0L;
+      var bg=d.backgroundColor;if(typeof bg==='function')bg=bg(v);else if(Array.isArray(bg))bg=bg[j]||'rgba(170,170,170,0.35)';
+      if(!bg||bg==='transparent')return;
+      ctx.fillStyle=bg;ctx.fillRect(cx-bw2/2,Math.min(yv,yb),bw2,Math.max(1,Math.abs(yv-yb)));
+    });
+  }.bind(this));
+  // Lines
+  var isLineDS=function(d){return d.type==='line'||(this.config.type==='line'&&d.type!=='bar');}.bind(this);
+  datasets.forEach(function(d,i){
+    if(this._hidden[i]||!isLineDS(d))return;
+    var pts=[];d.data.forEach(function(v,j){if(v!=null)pts.push({x:padL+(j+0.5)*step,y:toY(d,v),j:j});});
+    if(!pts.length)return;
+    ctx.save();ctx.setLineDash(d.borderDash||[]);ctx.strokeStyle=d.borderColor||'#7145D6';
+    ctx.lineWidth=d.borderWidth||2;ctx.lineJoin='round';ctx.lineCap='round';
+    var t=d.tension||0;
+    ctx.beginPath();if(t>0)drawSmooth(ctx,pts,t);else{pts.forEach(function(p,k){k?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y);});}
+    ctx.stroke();
+    var r=d.pointRadius!=null?d.pointRadius:3;
+    if(r>0){ctx.setLineDash([]);ctx.fillStyle=d.pointBackgroundColor||d.borderColor||'#7145D6';pts.forEach(function(p){ctx.beginPath();ctx.arc(p.x,p.y,r,0,6.283);ctx.fill();});}
+    ctx.restore();
+  }.bind(this));
+  // Hover line + tooltip
+  if(hoverIdx!=null&&hoverIdx>=0){
+    var hx=padL+(hoverIdx+0.5)*step;
+    ctx.strokeStyle='rgba(100,100,100,0.15)';ctx.lineWidth=1;ctx.setLineDash([4,3]);
+    ctx.beginPath();ctx.moveTo(hx,padT);ctx.lineTo(hx,padT+PH);ctx.stroke();ctx.setLineDash([]);
+    var tipCfg=(this.options.plugins&&this.options.plugins.tooltip)||{};
+    var tipCb=tipCfg.callbacks&&tipCfg.callbacks.label;
+    var hlines=[labels[hoverIdx]];
+    datasets.forEach(function(d,i){
+      if(this._hidden[i])return;
+      var v=d.data[hoverIdx];if(v==null)return;
+      var obj={dataset:d,raw:v,datasetIndex:i,dataIndex:hoverIdx,label:d.label||''};
+      var txt=tipCb?tipCb(obj):' '+(d.label||'')+': '+v;
+      if(txt)hlines.push(txt);
+    }.bind(this));
+    ctx.font='bold 11px Montserrat,sans-serif';ctx.textAlign='left';
+    var tw=0;hlines.forEach(function(l){tw=Math.max(tw,ctx.measureText(l).width);});
+    var th=hlines.length*16+14,tx=hx+10,ty=padT+8;
+    if(tx+tw+18>W)tx=hx-tw-26;
+    ctx.fillStyle='rgba(31,18,63,0.93)';ctx.beginPath();
+    if(ctx.roundRect)ctx.roundRect(tx,ty,tw+16,th,8);else ctx.rect(tx,ty,tw+16,th);
+    ctx.fill();
+    ctx.fillStyle='#EFE9FC';ctx.font='bold 11px Montserrat,sans-serif';ctx.fillText(hlines[0],tx+8,ty+14);
+    ctx.fillStyle='#DDD2F8';ctx.font='11px Montserrat,sans-serif';
+    hlines.slice(1).forEach(function(l,k){ctx.fillText(l,tx+8,ty+14+16*(k+1));});
+  }
+  // afterDraw plugins
+  this._plugins.forEach(function(p){if(p.afterDraw)p.afterDraw(this);}.bind(this));
+};
+root.Chart=TC;
+})(window);
+</script>
+  <style>
+    :root {
+      --m0:#FAF8FE;--m10:#EFE9FC;--m20:#DDD2F8;--m30:#C3AFF2;
+      --m60:#7145D6;--m80:#3B2A73;--m100:#1F123F;
+      --black:#1B1B25;--gray-dark:#5a5a5a;--gray-n60:#717182;
+      --gray-light:#e0e0e0;--white:#FFFFFF;
+      --green:#0C936B;--red:#E74A41;--orange:#EA8C2E;
+    }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Montserrat','Inter',system-ui,sans-serif;background:var(--m0);color:var(--black);min-height:100vh;}
+
+    .header{background:linear-gradient(135deg,var(--m100) 0%,var(--m80) 60%,var(--m60) 100%);padding:24px 40px 0;}
+    .header-top{display:flex;align-items:center;justify-content:space-between;padding-bottom:18px;}
+    .header-left{display:flex;align-items:center;gap:14px;}
+    .logo-mark{width:42px;height:42px;background:var(--m60);border-radius:9px;display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,0.25);}
+    .logo-mark svg{width:22px;height:22px;fill:white;}
+    .header-title h1{color:white;font-size:19px;font-weight:800;letter-spacing:-0.3px;}
+    .header-title p{color:var(--m20);font-size:11px;margin-top:2px;}
+
+    .country-tabs{display:flex;gap:0;overflow-x:auto;}
+    .readme-tab{color:rgba(255,255,255,0.5);font-size:12px;font-weight:700;padding:10px 18px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;transition:all 0.15s;user-select:none;margin-left:auto;}
+    .readme-tab:hover{color:rgba(255,255,255,0.85);}
+    .readme-tab.active{color:white;border-bottom-color:#EA8C2E;}
+    .readme-panel{display:none;padding:28px 32px;max-width:860px;margin:0 auto;}
+    .readme-panel.visible{display:block;}
+    .readme-section{background:white;border-radius:14px;padding:22px 26px;margin-bottom:18px;border:1px solid var(--m10);}
+    .readme-section h2{font-size:14px;font-weight:800;color:var(--m80);margin:0 0 4px;letter-spacing:.3px;}
+    .readme-section .tag{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:20px;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px;}
+    .readme-section p{font-size:13px;color:#444;line-height:1.65;margin:6px 0;}
+    .readme-section ul{font-size:13px;color:#444;line-height:1.7;margin:6px 0;padding-left:18px;}
+    .readme-badge{display:inline-block;font-size:11px;font-weight:700;border-radius:6px;padding:2px 8px;margin-right:4px;}
+    .country-tab{color:rgba(255,255,255,0.5);font-size:12px;font-weight:700;padding:10px 18px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;transition:all 0.15s;user-select:none;}
+    .country-tab:hover{color:rgba(255,255,255,0.85);}
+    .country-tab.active{color:white;border-bottom-color:white;}
+
+    .main{max-width:1040px;margin:0 auto;padding:24px 24px 60px;}
+
+    /* FY SUMMARY BLOCKS */
+    .fy-section{margin-bottom:20px;}
+    .fy-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+    .fy-label{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--gray-n60);}
+    .fy-toggle-all{font-size:11px;font-weight:600;color:var(--m60);cursor:pointer;user-select:none;padding:3px 8px;border-radius:10px;border:1px solid var(--m30);background:white;}
+    .fy-toggle-all:hover{background:var(--m10);}
+    .fy-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+    .fy-card{background:white;border-radius:11px;padding:14px 16px;border:1px solid var(--m10);cursor:pointer;transition:all 0.15s;user-select:none;position:relative;overflow:hidden;}
+    .fy-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;}
+    .fy-card.est::before{background:var(--m60);}
+    .fy-card.sim::before{background:var(--m60);opacity:0.5;}
+    .fy-card.tgt::before{background:var(--orange);}
+    .fy-card.hidden-card{opacity:0.4;background:var(--m0);}
+    .fy-card-label{font-size:9px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--gray-n60);margin-bottom:5px;}
+    .fy-card-value{font-size:20px;font-weight:800;color:var(--m80);letter-spacing:-0.4px;}
+    .fy-card-sub{font-size:10px;color:var(--gray-n60);margin-top:3px;}
+    .fy-badge{display:inline-flex;font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;margin-top:4px;}
+    .fy-badge.up{background:#e8f7f2;color:var(--green);}
+    .fy-badge.down{background:#fdecea;color:var(--red);}
+    .fy-eye{position:absolute;top:10px;right:10px;font-size:14px;opacity:0.4;}
+
+    /* METRIC PILLS */
+    .selector-section{margin-bottom:18px;}
+    .selector-label{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--gray-n60);margin-bottom:8px;}
+    .metric-pills{display:flex;flex-wrap:wrap;gap:7px;}
+    .metric-pill{background:white;border:1.5px solid var(--gray-light);color:var(--gray-dark);font-size:12px;font-weight:600;padding:7px 14px;border-radius:20px;cursor:pointer;transition:all 0.15s;white-space:nowrap;user-select:none;}
+    .metric-pill:hover{border-color:var(--m30);color:var(--m60);background:var(--m10);}
+    .metric-pill.active{background:var(--m60);border-color:var(--m60);color:white;box-shadow:0 3px 12px rgba(113,69,214,0.3);}
+
+    /* KPI STRIP */
+    .kpi-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px;}
+    .kpi-card{background:white;border-radius:12px;padding:15px 17px;border:1px solid var(--m10);position:relative;overflow:hidden;}
+    .kpi-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--m60);}
+    .kpi-card.green::before{background:var(--green);}
+    .kpi-card.red::before{background:var(--red);}
+    .kpi-card.orange::before{background:var(--orange);}
+    .kpi-label{font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--gray-n60);margin-bottom:5px;}
+    .kpi-value{font-size:22px;font-weight:800;color:var(--m80);letter-spacing:-0.4px;line-height:1;}
+    .kpi-sub{font-size:11px;color:var(--gray-n60);margin-top:3px;}
+    .kpi-badge{display:inline-flex;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;margin-top:5px;}
+    .kpi-badge.up{background:#e8f7f2;color:var(--green);}
+    .kpi-badge.down{background:#fdecea;color:var(--red);}
+
+    /* CHART */
+    .chart-card{background:white;border-radius:14px;padding:22px 22px 18px;border:1px solid var(--m10);box-shadow:0 2px 16px rgba(113,69,214,0.06);}
+    .chart-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px;gap:12px;flex-wrap:wrap;}
+    .chart-title{font-size:16px;font-weight:800;color:var(--m100);}
+    .chart-legend{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+    .legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--gray-dark);font-weight:600;cursor:pointer;user-select:none;transition:opacity 0.15s;}
+    .legend-item.hidden{opacity:0.3;text-decoration:line-through;}
+    .legend-line{width:20px;height:2px;border-radius:2px;flex-shrink:0;}
+    .chart-area{position:relative;height:280px;}
+    .note{background:var(--m10);border-left:3px solid var(--m60);padding:8px 12px;border-radius:0 6px 6px 0;font-size:10px;color:var(--m80);margin-top:12px;}
+
+
+    /* SCENARIO H1/H2 STRIP */
+    .scenario-section{margin-bottom:18px;}
+    .scenario-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+    .scenario-card{background:white;border-radius:11px;padding:12px 14px;border:1px solid var(--m10);position:relative;overflow:hidden;}
+    .scenario-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;}
+    .scenario-card.sc-actuals::before{background:#1F123F;}
+    .scenario-card.sc-tendencia::before{background:#3B2A73;}
+    .scenario-card.sc-sim::before{background:#7145D6;}
+    .scenario-card.sc-tgt::before{background:#EA8C2E;}
+    .sc-label{font-size:9px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--gray-n60);margin-bottom:6px;}
+    .sc-row{display:flex;gap:6px;align-items:flex-end;margin-bottom:3px;}
+    .sc-half{flex:1;}
+    .sc-half-label{font-size:8px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:var(--gray-n60);margin-bottom:1px;}
+    .sc-half-value{font-size:14px;font-weight:800;color:var(--m80);letter-spacing:-0.3px;line-height:1;}
+    .sc-divider{width:1px;background:var(--gray-light);align-self:stretch;margin-bottom:2px;}
+    .sc-badge{font-size:9px;font-weight:700;padding:2px 6px;border-radius:5px;margin-top:3px;display:inline-flex;}
+    .sc-badge.up{background:#e8f7f2;color:var(--green);}
+    .sc-badge.down{background:#fdecea;color:var(--red);}
+
+    @media(max-width:640px){
+      .kpi-strip,.fy-strip{grid-template-columns:1fr 1fr;}
+      .header-top{flex-direction:column;align-items:flex-start;}
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-top">
+    <div class="header-left">
+      <div class="logo-mark">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/></svg>
+      </div>
+      <div class="header-title">
+        <h1>Business Plan H2 2026</h1>
+        <p>Simulación B2C · Target original · Estimación tendencia</p>
+      </div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:stretch;">
+    <div class="country-tabs" id="countryTabs"></div>
+    <div class="readme-tab" id="readmeTab" onclick="toggleReadme()">ℹ️ Guía</div>
+  </div>
+</div>
+
+<div class="readme-panel" id="readmePanel">
+  <div class="readme-section">
+    <h2>📊 Business Plan H2 2026 — Guía de escenarios</h2>
+    <p>Este dashboard consolida los datos reales YTD (Ene–May 2026) y proyecta tres escenarios para el resto del año. Última actualización de actuals: <strong>Mayo 2026</strong>. Forecast de referencia: <strong>Q2 2026</strong>.</p>
+  </div>
+
+  <div class="readme-section">
+    <h2>🟠 Target — Forecast oficial Q2</h2>
+    <span class="tag" style="background:#FFF3E0;color:#E65100;">Referencia oficial</span>
+    <p>Es el <strong>último forecast oficial aprobado (Q2 2026)</strong>. Representa el compromiso del equipo con la organización. Los valores de H2 son los targets mensuales del plan.</p>
+    <ul>
+      <li>Fuente: BP oficial Q2 2026.</li>
+      <li>No cambia salvo nueva revisión formal del forecast.</li>
+      <li>El badge <em>vs Target</em> en los KPIs mide el gap acumulado entre actuals y este plan.</li>
+    </ul>
+  </div>
+
+  <div class="readme-section">
+    <h2>🟣 Simulación B2C — Estimación del equipo</h2>
+    <span class="tag" style="background:#F3EFFE;color:#5B21B6;">Estimación interna</span>
+    <p>Escenario construido por el <strong>equipo de B2C</strong> como alternativa al target oficial. Refleja hipótesis propias del equipo sobre la evolución del negocio, distintas a las del forecast Q2.</p>
+    <ul>
+      <li>No es un compromiso formal; es una visión interna de trabajo.</li>
+      <li>Útil para comparar gap entre lo que el equipo anticipa y el plan oficial.</li>
+      <li>Se puede ocultar/mostrar haciendo click en su tarjeta.</li>
+    </ul>
+  </div>
+
+  <div class="readme-section">
+    <h2>⬛ Tendencia H2 — Proyección estadística YTD</h2>
+    <span class="tag" style="background:#F5F5F5;color:#333;">Proyección automática</span>
+    <p>Proyección calculada automáticamente en base a los actuals acumulados. La lógica es: <strong>tgt[mes] × (actuals_YTD / target_YTD)</strong>, usando solo los meses donde existen tanto actuals como target.</p>
+    <p>Esto significa que si el acumulado YTD va un 5% por debajo del plan, la tendencia proyecta el resto del año también un 5% por debajo del target (manteniendo la estacionalidad del plan).</p>
+    <ul>
+      <li>Se actualiza automáticamente al añadir nuevos meses de actuals.</li>
+      <li>El YoY medio de actuals se usa como fallback si no hay target disponible.</li>
+      <li>No es una estimación del equipo — es un espejo del ritmo actual.</li>
+    </ul>
+  </div>
+
+  <div class="readme-section">
+    <h2>📐 Métricas y convenciones</h2>
+    <ul>
+      <li><strong>GMV B2C / DOs B2C / NCC</strong>: métricas de flujo → KPI YTD muestra la <em>suma acumulada</em>. H2/FY también es suma.</li>
+      <li><strong>Active Users, AU RAM, Active Drivers, Avg Ticket, Do/User, DO/Driver</strong>: métricas de stock o ratio → KPI YTD muestra la <em>media mensual</em>.</li>
+      <li><strong>DOs B2C</strong> = DOs Private + DOs Asset Sharing (excluye Corporate).</li>
+      <li><strong>DO/Driver</strong> = DOs Totales (Private + Corporate + Asset Sharing) / Active Drivers.</li>
+      <li><strong>AU RAM</strong>: usuarios activos según modelo RAM (base activa). Distinto de Active Users B2C.</li>
+      <li>Los datos de Churn Ene-2025 son N/D en la fuente (CSV del modelo RAM).</li>
+      <li>Los FX rates aplicados son los del BP original por país.</li>
+    </ul>
+  </div>
+
+  <div class="readme-section">
+    <h2>🔄 Cómo actualizar los datos</h2>
+    <ul>
+      <li>Los actuals se actualizan mensualmente editando los arrays <code>a26</code> en <code>ALL_DATA</code> y <code>AU_RAM_DATA</code> dentro del HTML.</li>
+      <li>El índice 0 = Enero, 4 = Mayo, 11 = Diciembre.</li>
+      <li>Cuando se añade un actual para el mes N, poner <code>sim[N] = null</code> para ese mes.</li>
+      <li>La tendencia se recalcula automáticamente.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="metric-selector-bar" id="metricSelectorBar" style="background:white;border-bottom:1px solid var(--m10);padding:10px 24px;">
+  <div class="metric-pills" id="metricPills"></div>
+</div>
+
+<div class="main" id="mainContent">
+
+  <!-- FY SUMMARY -->
+  <div class="fy-section" id="fySection" style="display:none;">
+    <div class="fy-header">
+      <div class="fy-label">Full Year 2026 — Resumen anual</div>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <div class="fy-toggle-all" id="fyToggleAll">Ocultar todo</div>
+        <div class="fy-toggle-all" id="fyToggleBlock" onclick="toggleFyBlock()">Ocultar bloque</div>
+      </div>
+    </div>
+    <div id="fyBody">
+    <div class="fy-strip" id="fyStrip"></div>
+    </div>
+  </div>
+
+
+  <!-- SCENARIO H1/H2 STRIP -->
+  <div class="scenario-section" id="scenarioSection" style="display:none;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <div class="selector-label">Escenarios H1 · H2 · FY</div>
+      <div style="display:flex;gap:6px;">
+        <button id="scToggleH1" onclick="toggleScHalf('h1')" style="font-size:10px;padding:3px 10px;border-radius:20px;border:1px solid var(--m30);background:var(--m10);color:var(--m80);cursor:pointer;font-weight:600;">Ocultar H1</button>
+        <button id="scToggleH2" onclick="toggleScHalf('h2')" style="font-size:10px;padding:3px 10px;border-radius:20px;border:1px solid var(--m30);background:var(--m10);color:var(--m80);cursor:pointer;font-weight:600;">Ocultar H2</button>
+        <div class="fy-toggle-all" id="scToggleAll" onclick="toggleScAll()">Ocultar bloque</div>
+      </div>
+    </div>
+    <div id="scenarioBody">
+    <div class="scenario-strip" id="scenarioStrip"></div>
+    </div>
+  </div>
+
+
+  <!-- PER-COUNTRY INSIGHTS -->
+
+  <!-- KPI STRIP -->
+  <div class="kpi-strip" id="kpiStrip"></div>
+
+  <!-- RAM H2 INLINE (solo AU RAM, se clona desde ramH2Card) -->
+  <div id="ramH2Inline" style="display:none;margin-top:14px;"></div>
+
+  <!-- CHART -->
+  <div class="chart-card" id="mainChartCard">
+    <div class="chart-header">
+      <div class="chart-title" id="chartTitle">GMV B2C</div>
+      <div class="chart-legend" id="chartLegend">
+        <div class="legend-item" data-label="Actuals 2025"><div class="legend-line" style="background:#C3AFF2;"></div>Actuals 2025</div>
+        <div class="legend-item" data-label="Actuals 2026"><div class="legend-line" style="background:#1F123F;"></div>Actuals 2026</div>
+
+        <div class="legend-item" data-label="Simulación B2C"><div class="legend-line" style="border-top:2px dashed #7145D6;height:0;"></div>Simulación B2C</div>
+        <div class="legend-item" data-label="Target"><div class="legend-line" style="border-top:2px dashed #EA8C2E;height:0;"></div>Target</div>
+        <div class="legend-item" data-label="Δ vs 2025"><div class="legend-line" style="background:rgba(160,160,160,0.5);height:8px;border-radius:2px;"></div>Δ vs 2025</div>
+      </div>
+    </div>
+    <div class="chart-area"><canvas id="mainChart"></canvas></div>
+    <div class="note">Barras grises = Δ absoluto vs 2025 (eje derecho). Líneas discontinuas = proyección. Valores May–Dic 2026 en simulación/target.</div>
+  </div>
+
+  <!-- AU RAM BREAKDOWN -->
+  <div class="chart-card" style="margin-top:18px;display:none;" id="ramBreakdownCard">
+    <div class="chart-header">
+      <div>
+        <div class="chart-title">AU RAM · Desglose de usuarios</div>
+        <div style="font-size:11px;color:var(--gray-n60);margin-top:3px;">New · Reactivated · Recurrent · Churn — comparativa YoY Ene–Abr</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="chart-legend" id="ramLegend">
+          <div class="legend-item" data-rl="new"><div class="legend-line" style="background:#0C936B;height:10px;border-radius:2px;"></div>New</div>
+          <div class="legend-item" data-rl="react"><div class="legend-line" style="background:#7145D6;height:10px;border-radius:2px;"></div>Reactivated</div>
+          <div class="legend-item" data-rl="recur"><div class="legend-line" style="background:#C3AFF2;height:10px;border-radius:2px;"></div>Recurrent</div>
+          <div class="legend-item" data-rl="churn"><div class="legend-line" style="background:#E74A41;height:10px;border-radius:2px;"></div>Churn</div>
+        </div>
+        <div id="ramBreakdownToggle" class="fy-toggle-all" style="cursor:pointer;" onclick="toggleRamBreakdown()">Ocultar</div>
+      </div>
+    </div>
+    <div class="chart-area" style="height:280px;padding-top:30px;"><canvas id="ramChart"></canvas></div>
+    <div class="note">Barras agrupadas por mes: izquierda = 2025 · derecha = 2026 actuals (Ene–May). Churn en negativo. Total encima de cada barra · YoY% sobre las barras de 2026. <strong>Churn Ene-25 = N/D</strong> en la fuente (RAM model CSV no incluía ese dato).</div>
+  </div>
+
+
+  <!-- RAM H2 TARGETS -->
+  <div style="margin-top:14px;display:none;" id="ramH2Card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--gray-n60);">Objetivos H2 · Componentes RAM (Jul–Dic)</div>
+      <div id="ramH2Toggle" class="fy-toggle-all" style="cursor:pointer;" onclick="toggleRamH2()">Ocultar</div>
+    </div>
+    <div id="ramH2Body">
+    <div id="ramH2Strip" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>
+    </div>
+  </div>
+
+  <!-- RAM COMPONENT CHART -->
+  <div class="chart-card" style="margin-top:18px;display:none;" id="ramCompCard">
+    <div class="chart-header" style="flex-wrap:wrap;gap:8px;">
+      <div style="display:flex;align-items:center;gap:10px;flex:1;flex-wrap:wrap;">
+        <div>
+          <div class="chart-title" id="ramCompTitle">New users · Evolución mensual</div>
+          <div style="font-size:11px;color:var(--gray-n60);margin-top:2px;">Actuals 2025 · 2026</div>
+        </div>
+        <!-- Metric pills -->
+        <div style="display:flex;gap:5px;flex-wrap:wrap;" id="ramCompPills">
+          <button class="metric-pill active" data-comp="New">New</button>
+          <button class="metric-pill" data-comp="Reactivated">Reactivated</button>
+          <button class="metric-pill" data-comp="Recurrent">Recurrent</button>
+          <button class="metric-pill" data-comp="Churn">Churn</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+        <!-- Scenario legend (clickable) -->
+        <div id="ramCompLegend" class="chart-legend" style="gap:10px;">
+          <div class="legend-item" data-rscen="a25"><div class="legend-line" style="background:#C3AFF2;"></div>2025</div>
+          <div class="legend-item" data-rscen="a26"><div class="legend-line" style="background:#1F123F;"></div>2026</div>
+        </div>
+        <!-- Collapse button -->
+        <div id="ramCompToggle" class="fy-toggle-all" style="cursor:pointer;" onclick="toggleRamComp()">Ocultar</div>
+      </div>
+    </div>
+    <div class="chart-area" style="height:260px;margin-top:14px;"><canvas id="ramCompChart"></canvas></div>
+
+  </div>
+
+  <!-- INVESTMENT CARD -->
+  <div id="investmentCard" style="display:none;margin-top:4px;">
+    <div class="chart-card">
+      <div class="chart-header">
+        <div class="chart-title">Inversión Rider · Actuals 2026</div>
+        <div style="font-size:11px;color:var(--gray-n60);margin-top:3px;">Brand · Acquisition · Engagement · Descuentos — Actuals mensuales 2026 (Ene–May) + composición vs 2025</div>
+      </div>
+      <div id="invTableWrap" style="margin-top:12px;overflow-x:auto;"></div>
+    </div>
+  </div>
+
+
+  <!-- ESTIMATIONS TAB -->
+  <div id="estCard" style="display:none;margin-top:4px;">
+    <!-- Funnel card (top) -->
+    <div class="chart-card" style="margin-bottom:18px;">
+      <div class="chart-header">
+        <div class="chart-title" id="estFunnelTitle">Funnel · May 2026</div>
+        <div style="font-size:11px;color:var(--gray-n60);margin-top:3px;">YTD Ene–May 2026 vs Ene–May 2025. SR% = media mensual del período.</div>
+      </div>
+      <div id="estFunnelBody" style="padding:18px 0;"></div>
+
+    </div>
+    <!-- KPI strip for estimations -->
+    <div id="estKpiStrip" style="display:none;"></div>
+    <!-- Evolution chart -->
+    <div class="chart-card" style="margin-bottom:18px;">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">Estimaciones · Evolución mensual</div>
+          <div style="font-size:11px;color:var(--gray-n60);margin-top:3px;">Jan 2025 – May 2026 · Jun 2026 parcial</div>
+        </div>
+        <div class="chart-legend" style="display:flex;gap:16px;">
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--gray-dark);font-weight:600;"><span style="width:20px;height:2px;background:#C3AFF2;display:inline-block;border-radius:2px;"></span>2025</span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--gray-dark);font-weight:600;"><span style="width:20px;height:2px;background:#1F123F;display:inline-block;border-radius:2px;"></span>2026</span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--gray-dark);font-weight:600;"><span style="width:20px;height:2px;border-top:2px dashed #EA8C2E;display:inline-block;"></span>CR% (eje dcha.)</span>
+        </div>
+      </div>
+      <div class="chart-area" style="height:280px;"><canvas id="estChart"></canvas></div>
+      <div class="note" style="margin-top:12px;">Estimaciones = precio solicitado en la app (B2C). CR% = Requests / Estimaciones.</div>
+    </div>
+  </div>
+  <!-- SR% CHART CARD -->
+  <div id="srCard" style="display:none;margin-top:4px;">
+    <div id="srKpiStrip" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px;"></div>
+    <div class="chart-card">
+      <div class="chart-header">
+        <div class="chart-title">SR%</div>
+        <div class="chart-legend" style="display:flex;gap:16px;">
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--gray-dark);font-weight:600;"><span style="width:20px;height:2px;background:#C3AFF2;display:inline-block;border-radius:2px;"></span>2025</span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--gray-dark);font-weight:600;"><span style="width:20px;height:2px;background:#1F123F;display:inline-block;border-radius:2px;"></span>2026</span>
+        </div>
+      </div>
+      <div class="chart-area"><canvas id="srChart"></canvas></div>
+      <div class="note" style="margin-top:12px;">SR% = tasa de éxito de solicitudes. Valores mensuales — nunca se suman. Global = media simple de los 6 países.</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const MONTHS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+const METRICS_CFG = {
+  'GMV B2C':        {unit:'€',scale:1e6,decimals:1,suffix:'M',isPct:false},
+  'DOs (DO B2C)':   {unit:'', scale:1e6,decimals:2,suffix:'M',isPct:false},
+  'Avg Ticket':     {unit:'$',scale:1,  decimals:2,suffix:'', isPct:false},
+  'NCC':            {unit:'€',scale:1e6,decimals:1,suffix:'M',isPct:false},
+  'Active Users':   {unit:'', scale:1e6,decimals:2,suffix:'M',isPct:false},
+  'AU RAM':         {unit:'', scale:1e6,decimals:2,suffix:'M',isPct:false},
+  'Do/User':        {unit:'', scale:1,  decimals:2,suffix:'', isPct:false},
+  'Active Drivers': {unit:'', scale:1e3,decimals:1,suffix:'K',isPct:false},
+  'DO/Driver':      {unit:'', scale:1,  decimals:1,suffix:'', isPct:false},
+  'Investment':      {unit:'€',scale:1,  decimals:0,suffix:'', isPct:false,isInvestment:true},
+  'Funnel':     {unit:'',  scale:1e6,decimals:1,suffix:'M', isPct:false,isEstimations:true},
+};
+
+// % badge metrics (show YoY % in KPI badges instead of absolute)
+const PCT_BADGE_METRICS = new Set(['GMV B2C','DOs (DO B2C)','Avg Ticket','NCC','Active Users','AU RAM','Active Drivers','SR%']);
+
+const ALL_DATA = {
+ "ALL COUNTRIES": {
+  "GMV B2C": {a25:[51386637,51938229,65173421,59461185,65618051,66972303,64886152,59996731,64162277,65628877,67384600,73983907],a26:[55619383,55456450,65242792,65338387,70495567,null,null,null,null,null,null,null],sim:[null,null,null,null,null,79065727,77248846,69810545,79050002,80881807,80892120,85900180],tgt:[56086506,55454267,70179680,69681639,75508608,79065727,77248846,69810545,79050002,80881807,80892120,85900180]},
+  "DOs (DO B2C)": {a25:[6331502,6227097,7192317,6749791,7233106,7014343,7311793,7135952,7208366,7510109,7435462,7581080],a26:[6463932,6298593,7277161,6952809,7287021,null,null,null,null,null,null,null],sim:[null,null,null,null,null,7308544,7819867,7610833,7955103,8389444,8311520,8455098],tgt:[6498372,6468128,7637229,7491525,7960649,7994506,8070757,7876664,7956594,8289658,8207263,8367996]},
+  "Avg Ticket": {a25:[8.116,8.3407,9.0615,8.8093,9.0719,9.5479,8.8742,8.3768,8.9011,8.7387,9.0626,9.7911],a26:[8.5727,8.7689,8.9978,9.3555,9.6222,null,null,null,null,null,null,null],sim:[null,null,null,null,null,10.8183,9.8785,9.1725,9.937,9.6409,9.7325,10.1596],tgt:[8.6309,8.5735,9.1892,9.3014,9.4852,9.89,9.3291,8.6994,9.4063,9.253,9.2772,9.7701]},
+  "NCC": {a25:[4871547,4343889,6179360,5341430,5905945,6255404,5506580,5163345,6203907,5656916,6009555,7315872],a26:[4528675,3837873,5242178,4455294,5674153,null,null,null,null,null,null,null],sim:[null,null,null,null,null,6994789,7171639,6187761,7109810,7681693,7378893,9232497],tgt:[4295058,3604724,5915698,4871291,5928054,6994789,7171639,6187761,7109810,7681693,7378893,9232497]},
+  "Active Users": {a25:[2003960,1999709,2225769,2108776,2223235,2229053,2226138,2146035,2212558,2291089,2328796,2471276],a26:[2049011,2025246,2218726,2161062,2260681,null,null,null,null,null,null,null],sim:[null,null,null,null,null,2279930,2327378,2224347,2366036,2465333,2506059,2659319],tgt:[2036606,2025330,2334936,2291974,2382649,2465895,2359706,2274797,2345311,2428554,2468524,2619553]},
+  "AU RAM": {a25:[4100965,4023746,3926580,3941870,3979848,4017239,4066131,4036153,4034156,4061089,4144492,4258045],a26:[4120725,4058054,3949017,3995180,4045324,null,null,null,null,null,null,null],sim:[null,null,null,null,null,4290587,4537824,4499345,4506435,4544665,4640879,4759993],tgt:[null,null,null,null,4143975,4167874,4311319,4279533,4277416,4305973,4394405,4514805]},
+  "Do/User": {a25:[3.1546,3.1099,3.2198,3.1951,3.2403,3.1331,3.2705,3.2987,3.2447,3.2621,3.1755,3.0429],a26:[3.1613,3.11,3.2533,3.2392,3.1777,null,null,null,null,null,null,null],sim:[null,null,null,null,null,3.2056,3.3599,3.4216,3.3622,3.403,3.3166,3.1794],tgt:[3.1908,3.1936,3.2709,3.2686,3.3411,3.242,3.3483,3.3959,3.358,3.3912,3.3234,3.2294]},
+  "Active Drivers": {a25:[97564,96100,100314,101089,102383,101499,103010,104930,105939,109490,106867,105139],a26:[105177,103378,109169,108902,106998,null,null,null,null,null,null,null],sim:[null,null,null,null,null,107000,110000,113000,113000,118000,115000,111000],tgt:[102546,101189,105401,107665,108956,107612,110221,112275,113355,117154,114348,112499]},
+  "DO/Driver": {a25:[65.606,65.518,72.3974,67.3854,71.2628,69.7043,71.5363,66.9631,68.412,68.9893,69.9236,71.5073],a26:[62.0637,60.9278,66.7503,64.3558,77.3698,null,null,null,null,null,null,null],sim:[null,null,null,null,null,68.3041,71.0897,67.3525,70.3991,71.097,72.2741,76.1721],tgt:[63,64,72,70,73,74,73.6824,68.9720,70.4644,71.0590,72.0213,73.6525]},
+ },
+ "AR": {
+  "GMV B2C": {a25:[15189851,16012393,19816950,17679048,18773498,17930018,18865685,17843437,16329987,17242760,18624627,21313664],a26:[13926170,15450975,18507352,18828088,18916324,null,null,null,null,null,null,null],sim:[null,null,null,null,null,18323914,19892347,19438856,18840367,19913332,20699215,21757756],tgt:[14346620,14927126,18157720,17937241,18642788,18323914,19892347,19438856,18840367,19913332,20699215,21757756]},
+  "DOs (DO B2C)": {a25:[2181109,2207545,2535916,2469032,2638843,2589460,2833245,2854206,2699825,2853608,2868755,2937106],a26:[2430487,2452295,2798708,2682452,2715328,null,null,null,null,null,null,null],sim:[null,null,null,null,null,2845832,3153574,3002828,3001485,3176051,3195402,3271441],tgt:[2474298,2479345,2823963,2820745,2936531,2930721,3153402,3176731,3004905,3176066,3192924,3268999]},
+  "Avg Ticket": {a25:[6.9643,7.2535,7.8145,7.1603,7.1143,6.9242,6.6587,6.0485,6.0485,6.0424,6.4922,7.2567],a26:[5.7298,6.3006,6.6128,7.019,6.9665,null,null,null,null,null,null,null],sim:[null,null,null,null,null,6.4389,6.3079,6.4735,6.277,6.2698,6.4778,6.6508],tgt:[5.7983,6.0206,6.4299,6.359,6.3486,6.2524,6.3528,6.1563,6.1631,6.1788,6.4214,6.672]},
+  "NCC": {a25:[1534208,2070564,2509191,2141596,2399890,2069947,2425514,2264105,2264105,2267567,2610521,2726808],a26:[1633196,1921702,2479889,2383024,2408218,null,null,null,null,null,null,null],sim:[null,null,null,null,null,2297211,2569222,2695628,2561182,2596878,2788985,2862838],tgt:[1700718,1852521,2555397,2324936,2366112,2297211,2569222,2695628,2561182,2596878,2788985,2862838]},
+  "Active Users": {a25:[672890,692537,765265,732568,761032,758411,813857,799442,761836,807582,844818,902512],a26:[718200,743293,798394,778863,779699,null,null,null,null,null,null,null],sim:[null,null,null,null,null,805000,874000,818000,817000,868000,909000,970000],tgt:[720770,732561,836160,789315,797521,825191,862688,847409,807546,856037,895507,956663]},
+  "AU RAM": {a25:[1323398,1318664,1307314,1316527,1320698,1317656,1348032,1358338,1354846,1353405,1395782,1465706],a26:[1423934,1405462,1368002,1381243,1369914,null,null,null,null,null,null,null],sim:[null,null,null,null,null,1458743,1509508,1519082,1516716,1519058,1567828,1643320],tgt:[null,null,null,null,null,null,1442664,1453693,1449956,1448414,1493766,1568599]},
+  "Do/User": {a25:[3.2308,3.1776,3.3023,3.3573,3.4549,3.4011,3.4682,3.5311,3.5311,3.5182,3.3794,3.2426],a26:[3.4102,3.2992,3.5054,3.5087,3.3255,null,null,null,null,null,null,null],sim:[null,null,null,null,null,3.5352,3.6082,3.6709,3.6738,3.659,3.5153,3.3726],tgt:[3.4329,3.3845,3.3773,3.5737,3.6821,3.5516,3.5954,3.6385,3.6378,3.6166,3.4708,3.3089]},
+  "Active Drivers": {a25:[26187,25995,28137,29591,30224,29432,30307,32276,32290,33318,32026,30862],a26:[31753,30466,32250,31801,29985,null,null,null,null,null,null,null],sim:[null,null,null,null,null,33000,34000,37000,36000,37000,36000,34000],tgt:[29838,29642,31916,33368,33554,32152,32428,34535,34550,35650,34268,33022]},
+  "DO/Driver": {a25:[82.4709,84.206,89.318,82.568,86.1944,86.7171,91.7888,81.9122,81.9122,83.9964,87.7698,95.0581],a26:[76.4136,80.4928,86.6956,84.2743,92.8874,null,null,null,null,null,null,null],sim:[null,null,null,null,null,86.2373,92.7522,81.1575,83.3746,85.8392,88.7612,96.2189],tgt:[83,84,88,85,88,91,95,84,84,87,90,98]},
+ },
+ "CL": {
+  "GMV B2C": {a25:[4289742,3588836,5270275,4752167,5208584,4709560,4972304,5260359,4972583,5421978,5698192,6215372],a26:[5115869,4268913,5801051,5872528,5720091,null,null,null,null,null,null,null],sim:[null,null,null,null,null,5684011,6105837,6268422,6141741,6661533,6438373,6743969],tgt:[4843628,4176533,5875350,5493372,5879190,5684011,6105837,6268422,6141741,6661533,6438373,6743969]},
+  "DOs (DO B2C)": {a25:[683730,534153,726725,692606,744167,706945,776384,801009,743187,828174,811985,840021],a26:[762230,594837,790608,739132,753435,null,null,null,null,null,null,null],sim:[null,null,null,null,null,850795,935546,921085,877707,982097,957307,954092],tgt:[721796,613539,862378,809579,870333,850795,861398,888719,824566,918859,900897,932003]},
+  "Avg Ticket": {a25:[6.274,6.7187,7.2521,6.8613,6.9992,6.6618,6.4044,6.5672,6.6909,6.5469,7.0176,7.3991],a26:[6.7117,7.1766,7.3375,7.9452,7.592,null,null,null,null,null,null,null],sim:[null,null,null,null,null,7.5086,7.0916,7.0511,7.4445,7.2487,7.1458,7.236],tgt:[6.7105,6.8073,6.813,6.7855,6.7551,6.6808,6.5265,6.8055,6.9975,6.783,6.7255,7.0685]},
+  "NCC": {a25:[593964,450778,824110,407874,452191,501406,335867,505647,514814,515963,477252,543862],a26:[459671,379604,365445,305997,388941,null,null,null,null,null,null,null],sim:[null,null,null,null,null,625129,662336,641578,687594,701818,644093,744308],tgt:[388141,306223,361872,305863,388057,625129,662336,641578,687594,701818,644093,744308]},
+  "Active Users": {a25:[210791,182932,221226,211525,224336,213751,222309,234106,231418,244871,248513,258769],a26:[225285,190075,228634,219084,224935,null,null,null,null,null,null,null],sim:[null,null,null,null,null,218000,233000,246000,243000,258000,261000,271000],tgt:[212374,200149,249719,233429,252264,246216,235648,248152,245303,259563,263424,274295]},
+  "AU RAM": {a25:[400586,380774,374734,372708,377951,375858,377344,381261,389111,398129,407129,417856],a26:[407792,389417,379678,375859,379043,null,null,null,null,null,null,null],sim:[null,null,null,null,null,410721,425129,429821,437839,447950,457757,468984],tgt:[null,null,null,null,383748,381308,394966,399066,407282,416722,426142,437370]},
+  "Do/User": {a25:[3.2316,2.912,3.273,3.2621,3.3057,3.2963,3.4814,3.4101,3.199,3.3669,3.2532,3.2436],a26:[3.4002,3.1295,3.458,3.3737,3.1371,null,null,null,null,null,null,null],sim:[null,null,null,null,null,3.4725,3.6953,3.6138,3.3951,3.562,3.4521,3.4391],tgt:[3.3987,3.0654,3.4534,3.4682,3.4501,3.4555,3.7256,3.6401,3.4262,3.5897,3.605,3.4703]},
+  "Active Drivers": {a25:[12886,10996,12550,12355,12936,13107,13119,12997,12215,13125,12795,12960],a26:[13305,11757,13342,13152,12910,null,null,null,null,null,null,null],sim:[null,null,null,null,null,14000,14000,14000,13000,14000,14000,14000],tgt:[13105,11877,13383,13879,14541,14719,14037,13907,13070,14044,13691,13867]},
+  "DO/Driver": {a25:[52.9572,48.4536,57.7637,55.9591,57.4026,53.9406,59.0586,61.564,60.6485,62.9359,63.2929,64.6468],a26:[57.2073,50.5943,59.133,56.1267,67.5782,null,null,null,null,null,null,null],sim:[null,null,null,null,null,54.0714,61.5,63.5,63.4615,65.6429,64.3571,66.5714],tgt:[55,52,64,58,60,58,61,63,62,65,65,67]},
+ },
+ "CO": {
+  "GMV B2C": {a25:[4346085,5528988,5592491,4531395,5083437,4502077,4918770,4858630,5018973,5392194,5619155,5568650],a26:[3693777,4657746,5000574,4823218,4836487,null,null,null,null,null,null,null],sim:[null,null,null,null,null,4567962,4961612,5249430,5737030,6219992,6504531,7029576],tgt:[3682721,4438681,4727881,4328740,4863017,4567962,4961612,5249430,5737030,6219992,6504531,7029576]},
+  "DOs (DO B2C)": {a25:[975923,1081011,1027103,872128,957179,833436,913763,884221,898883,940717,926861,832771],a26:[617100,735739,793153,765215,782984,null,null,null,null,null,null,null],sim:[null,null,null,null,null,697000,853745,884264,980439,1041465,1061555,1039402],tgt:[646697,780262,788329,712239,797683,750368,876207,847880,861939,902054,888767,798544]},
+  "Avg Ticket": {a25:[4.4533,5.1146,5.4449,5.1958,5.3109,5.4018,5.383,5.4948,5.5836,5.732,6.0626,6.6877],a26:[5.9857,6.3307,6.3047,6.3031,6.177,null,null,null,null,null,null,null],sim:[null,null,null,null,null,6.5537,5.8116,5.9365,5.8515,5.9723,6.1274,6.7631],tgt:[5.6947,5.6887,5.9973,6.0777,6.0964,6.0876,5.8116,5.9365,5.8515,5.9723,6.1274,6.7631]},
+  "NCC": {a25:[398823,578171,695211,411879,366444,367299,406876,380052,548625,436660,425070,538069],a26:[293294,482622,422718,319812,375599,null,null,null,null,null,null,null],sim:[null,null,null,null,null,322409,400870,460076,520563,632838,682473,836199],tgt:[282072,454985,459114,310939,420151,322409,400870,460076,520563,632838,682473,836199]},
+  "Active Users": {a25:[244914,270574,252579,226168,250345,232757,229504,233566,237939,264320,269390,261930],a26:[190702,216733,225981,218624,224134,null,null,null,null,null,null,null],sim:[null,null,null,null,null,211000,233903,238990,258010,274070,286907,305706],tgt:[191898,194579,200593,213886,221579,214391,243274,247580,252215,280179,285553,277646]},
+  "AU RAM": {a25:[541325,518880,468079,447960,439243,435217,434031,424011,425582,450391,469910,477802],a26:[441392,430797,413628,422506,418930,null,null,null,null,null,null,null],sim:[null,null,null,null,null,443893,454907,446922,451033,480631,495809,498464],tgt:[null,null,null,null,444675,443893,406861,397468,398941,422197,440494,447892]},
+  "Do/User": {a25:[3.9887,3.998,4.0696,3.8574,3.8244,3.5828,3.9847,3.7853,3.7785,3.5509,3.4153,3.1175],a26:[3.1988,3.3947,3.5098,3.5001,3.0326,null,null,null,null,null,null,null],sim:[null,null,null,null,null,3.3033,3.65,3.7,3.8,3.8,3.7,3.4],tgt:[3.37,4.01,3.93,3.33,3.6,3.5,3.65,3.7,3.8,3.8,3.7,3.4]},
+  "Active Drivers": {a25:[31072,32098,31269,30615,30794,30151,30530,30050,30832,32117,31108,30742],a26:[30571,31519,32164,32390,32422,null,null,null,null,null,null,null],sim:[null,null,null,null,null,29000,31000,31000,31000,33000,32000,31000],tgt:[29715,29808,29444,29293,29119,28495,32667,32154,32990,34365,33286,32894]},
+  "DO/Driver": {a25:[32.6691,34.9423,34.08,29.6159,32.3426,28.7948,31.243,30.6883,30.3205,30.4272,30.9222,27.0864],a26:[20.8163,23.3427,25.4085,24.1812,34.4684,null,null,null,null,null,null,null],sim:[null,null,null,null,null,24.0345,25.129,26.0323,27.2903,28.9091,29.5,27.2581],tgt:[22,26,27,24,27,26,32,32,31,31,32,28]},
+ },
+ "ES": {
+  "GMV B2C": {a25:[21783358,20809837,27549074,25770748,29383848,32494639,28581129,24400941,30104084,29314269,28164583,30760217],a26:[25018412,22995992,27420910,27714684,32191741,null,null,null,null,null,null,null],sim:[null,null,null,null,null,41690889,37300843,30013759,39151999,38571866,37479440,39827985],tgt:[26118301,24532145,33062885,33863839,37445413,41690889,37300843,30013759,39151999,38571866,37479440,39827985]},
+  "DOs (DO B2C)": {a25:[1394008,1287639,1635927,1482021,1606673,1619251,1493955,1304835,1540019,1519859,1424552,1586249],a26:[1391572,1276459,1584805,1493064,1640383,null,null,null,null,null,null,null],sim:[null,null,null,null,null,1642691,1577332,1463058,1799593,1803723,1691122,1835344],tgt:[1430715,1335372,1764878,1796303,1927052,2028812,1723128,1504997,1776258,1753005,1643078,1829580]},
+  "Avg Ticket": {a25:[15.6264,16.1612,16.84,17.3889,18.2886,20.0677,19.1312,18.7004,19.5479,19.2875,19.7708,19.8752],a26:[17.8303,17.8392,17.7846,18.367,19.394,null,null,null,null,null,null,null],sim:[null,null,null,null,null,25.3796,23.6481,20.5144,21.756,21.3846,22.1625,21.7006],tgt:[18.2554,18.371,18.7338,18.852,19.4314,20.5494,19.501,18.7596,19.6883,19.6202,19.5487,20.2493]},
+  "NCC": {a25:[1661234,536847,1398372,1762465,1980993,2701211,1682706,1317952,2164463,1687379,1568894,2516241],a26:[1433607,318255,1217206,872898,1712061,null,null,null,null,null,null,null],sim:[null,null,null,null,null,3087628,2858443,1663513,2512610,2941803,2459949,3871652],tgt:[1391307,444436,1811440,1325208,2101971,3087628,2858443,1663513,2512610,2941803,2459949,3871652]},
+  "Active Users": {a25:[641820,609101,729438,684796,730038,764123,697690,618547,718084,703149,680254,753293],a26:[646150,602586,698990,678945,752709,null,null,null,null,null,null,null],sim:[null,null,null,null,null,765000,713000,652000,789000,785000,759000,837000],tgt:[653952,626412,768473,777202,822216,885856,739551,655660,761169,745338,721069,798491]},
+  "AU RAM": {a25:[1415581,1388697,1369829,1394653,1433629,1475948,1492534,1455799,1446973,1438736,1437117,1449406],a26:[1404319,1385226,1354693,1380404,1443641,null,null,null,null,null,null,null],sim:[null,null,null,null,null,1504634,1551509,1556967,1613414,1632174,1634452,1660798],tgt:[null,null,null,null,1482514,1504634,1614325,1574592,1565046,1556137,1554386,1567678]},
+  "Do/User": {a25:[2.172,2.114,2.2295,2.1642,2.2008,2.1053,2.1265,2.0986,2.132,2.1469,2.0816,2.0505],a26:[2.1536,2.1183,2.1813,2.1991,2.1793,null,null,null,null,null,null,null],sim:[null,null,null,null,null,2.1473,2.2122,2.244,2.2809,2.2977,2.2281,2.1928],tgt:[2.1878,2.1318,2.2966,2.3112,2.3437,2.2902,2.3307,2.2657,2.3435,2.3612,2.3201,2.3673]},
+  "Active Drivers": {a25:[8560,8608,9014,8932,8940,8769,8965,8594,9169,9331,9241,9153],a26:[9086,9450,10003,9917,9985,null,null,null,null,null,null,null],sim:[null,null,null,null,null,9000,10000,9000,10000,10000,10000,10000],tgt:[8471,8220,8756,8967,9295,9604,9593,9196,9811,9984,9888,9794]},
+  "DO/Driver": {a25:[162.8514,149.5863,181.2661,165.7927,179.4965,184.278,165.9028,151.3203,167.448,162.6387,153.8559,166.2417],a26:[153.1556,135.075,151.9218,150.2076,173.5787,null,null,null,null,null,null,null],sim:[null,null,null,null,null,182.5212,157.7332,162.562,179.9593,180.3723,169.1122,183.5344],tgt:[169,162,202,200,207,211,171,156,172,168,158,171]},
+ },
+ "PE": {
+  "GMV B2C": {a25:[4983738,5015185,5740319,5692179,5877402,5894819,6080847,6053065,6197345,6565173,7381789,7675335],a26:[6345849,6344728,6498499,6127193,6698763,null,null,null,null,null,null,null],sim:[null,null,null,null,null,6866750,7072671,6825565,7192342,7442472,7545684,7933504],tgt:[5745162,5869107,6575781,6501969,6871636,6866750,7072671,6825565,7192342,7442472,7545684,7933504]},
+  "DOs (DO B2C)": {a25:[1001093,993768,1125967,1107225,1134338,1101046,1125122,1114564,1155317,1177243,1203205,1157827],a26:[1100288,1050563,1085392,1052330,1159673,null,null,null,null,null,null,null],sim:[null,null,null,null,null,1115493,1191626,1180697,1223549,1247232,1276661,1226642],tgt:[1071859,1079873,1199960,1171526,1227018,1221759,1192179,1180992,1224174,1247407,1274916,1226833]},
+  "Avg Ticket": {a25:[4.9783,5.0466,5.0981,5.1409,5.1813,5.3538,5.4046,5.4309,5.3642,5.5767,6.1351,6.6291],a26:[5.7674,6.0394,5.9872,5.8225,5.7764,null,null,null,null,null,null,null],sim:[null,null,null,null,null,6.1558,5.9353,5.781,5.8783,5.9672,5.9105,6.4677],tgt:[5.36,5.435,5.48,5.55,5.6003,5.6204,5.731,5.5098,5.6204,5.731,5.731,6.04]},
+  "NCC": {a25:[705622,703796,733615,624644,696688,604219,644296,672487,712076,745203,928810,985881],a26:[705077,723959,724592,550526,750976,null,null,null,null,null,null,null],sim:[null,null,null,null,null,645969,662819,706979,804307,776859,773794,878765],tgt:[533376,545364,710690,595295,634410,645969,662819,706979,804307,776859,773794,878765]},
+  "Active Users": {a25:[201860,208005,217070,216708,215557,215607,217458,213359,216717,221481,231144,229288],a26:[219702,219006,207602,206372,217152,null,null,null,null,null,null,null],sim:[null,null,null,null,null,219000,229000,225000,228000,233000,244000,240000],tgt:[213518,222654,227265,229711,233718,236775,230505,226161,229720,234770,245013,243045]},
+  "AU RAM": {a25:[358844,354981,346746,349355,346007,347827,346925,347414,346891,347829,357622,361240],a26:[358060,360708,348551,347877,343671,null,null,null,null,null,null,null],sim:[null,null,null,null,null,389060,402935,404276,404918,407509,420141,422321],tgt:[null,null,null,null,350271,351010,363959,364472,363923,364907,375181,378977]},
+  "Do/User": {a25:[4.9574,4.7782,5.1826,5.1093,5.2377,5.0842,5.1521,5.2006,5.3076,5.2939,5.18,5.0641],a26:[5.0025,4.797,5.2282,5.0992,4.8769,null,null,null,null,null,null,null],sim:[null,null,null,null,null,5.0936,5.2036,5.2475,5.3664,5.3529,5.2322,5.111],tgt:[5.02,4.85,5.28,5.1,5.25,5.16,5.15,5.2,5.31,5.3,5.24,5.15]},
+  "Active Drivers": {a25:[17606,17126,17987,18223,18061,18661,18634,19531,19946,20064,20145,19782],a26:[18813,18544,19643,19909,19889,null,null,null,null,null,null,null],sim:[null,null,null,null,null,20000,20000,21000,21000,21000,21000,21000],tgt:[19846,20072,20335,20619,20870,21105,19938,20898,21342,21468,21555,21167]},
+  "DO/Driver": {a25:[57.3265,58.5189,63.0759,61.0815,63.2049,59.3556,60.8602,57.5467,58.2963,59.0778,60.0522,58.5293],a26:[59.0378,56.6524,55.8186,53.3717,73.332,null,null,null,null,null,null,null],sim:[null,null,null,null,null,55.7747,59.5813,56.2237,58.2642,59.392,60.7934,58.4115],tgt:[54,54,59,57,59,58,63,59,60,61,62,60]},
+ },
+ "UY": {
+  "GMV B2C": {a25:[793863,982991,1204312,1035647,1291284,1441188,1467417,1580298,1539304,1692502,1896253,2450670],a26:[1519307,1738096,2014406,1972675,2132161,null,null,null,null,null,null,null],sim:[null,null,null,null,null,1932201,1915536,2014513,1986523,2072612,2224877,2607390],tgt:[1350074,1510675,1780063,1556478,1806564,1932201,1915536,2014513,1986523,2072612,2224877,2607390]},
+  "DOs (DO B2C)": {a25:[95639,122981,140679,126779,151906,164205,169324,177117,171135,190508,200104,227106],a26:[162255,188700,224495,220616,235218,null,null,null,null,null,null,null],sim:[null,null,null,null,null,251000,257000,269000,260000,289000,304000,345000],tgt:[153007,179737,197721,181133,202032,212051,256881,268704,259629,289020,303578,344543]},
+  "Avg Ticket": {a25:[8.3006,7.993,8.5607,8.1689,8.5005,8.7768,8.6663,8.9223,8.9947,8.8842,9.4763,10.7909],a26:[9.3637,9.2109,8.9731,8.9417,9.0646,null,null,null,null,null,null,null],sim:[null,null,null,null,null,7.698,7.4534,7.4889,7.6405,7.1717,7.3187,7.5577],tgt:[8.8236,8.4049,9.0029,8.593,8.942,9.112,8.9947,9.0277,9.0067,9.0052,9.1488,10.1355]},
+  "NCC": {a25:[-22304,3733,18861,-7028,9739,11322,11321,23102,-176,4144,-992,5011],a26:[3830,11731,32328,23037,38358,null,null,null,null,null,null,null],sim:[null,null,null,null,null,16443,17949,19987,23554,31497,29599,38735],tgt:[-556,1195,17185,9050,17353,16443,17949,19987,23554,31497,29599,38735]},
+  "Active Users": {a25:[31685,36560,40191,37011,41927,44404,45320,47015,46564,49686,54677,65484],a26:[48972,53553,59125,59174,62052,null,null,null,null,null,null,null],sim:[null,null,null,null,null,63000,64000,66000,66000,70000,77000,92000],tgt:[44094,48975,52726,48431,55351,57466,48039,49836,49358,52667,57958,69413]},
+  "AU RAM": {a25:[61231,61750,59878,60667,62320,64733,67265,69330,70753,72599,76932,86035],a26:[85228,86444,84465,87291,90121,null,null,null,null,null,null,null],sim:[null,null,null,null,null,94614,97791,100833,102876,105605,111873,124701],tgt:[null,null,null,null,90900,94614,94487,97388,99387,101980,108066,120853]},
+  "Do/User": {a25:[2.9941,3.3461,3.4841,3.408,3.6076,3.6798,3.7165,3.7475,3.6572,3.8128,3.6383,3.4676],a26:[3.3237,3.5236,3.8205,3.746,3.8287,null,null,null,null,null,null,null],sim:[null,null,null,null,null,3.9841,4.0156,4.0758,3.9394,4.1286,3.9481,3.75],tgt:[3.47,3.67,3.75,3.74,3.65,3.69,3.75,3.79,3.7632,3.76,3.75,3.65]},
+  "Active Drivers": {a25:[1253,1277,1357,1373,1428,1379,1455,1482,1487,1535,1552,1640],a26:[1649,1642,1767,1733,1807,null,null,null,null,null,null,null],sim:[null,null,null,null,null,2000,2000,2000,2000,2000,2000,2000],tgt:[1571,1570,1567,1539,1577,1537,1557,1586,1591,1642,1661,1755]},
+  "DO/Driver": {a25:[76.2671,96.3046,103.5928,92.3372,106.4513,118.8169,116.0548,119.2707,114.7017,123.8674,128.7671,138.2264],a26:[98.2768,114.9208,126.7617,127.0829,143.2241,null,null,null,null,null,null,null],sim:[null,null,null,null,null,125.5,128.5,134.5,130,144.5,152,172.5],tgt:[97,114,126,118,128,138,120,123,118,128,133,142]},
+ },
+};
+
+// ── Dynamic derived metrics ──
+// Do/User = DOs / Active Users
+// DO/Driver = DOs / Active Drivers
+// Avg Ticket = GMV B2C / DOs
+(function() {
+  const divArr = (num, den) => num.map((v, i) => {
+    const d = den[i];
+    return (v !== null && d !== null && d !== 0) ? v / d : null;
+  });
+  Object.keys(ALL_DATA).forEach(function(country) {
+    const c = ALL_DATA[country];
+    const dos = c['DOs (DO B2C)'];
+    const au  = c['Active Users'];
+    const ad  = c['Active Drivers'];
+    const gmv = c['GMV B2C'];
+    ['a25','a26','sim','tgt'].forEach(function(k) {
+      c['Do/User'][k]    = divArr(dos[k], au[k]);
+      c['DO/Driver'][k]  = divArr(dos[k], ad[k]);
+      c['Avg Ticket'][k] = divArr(gmv[k], dos[k]);
+    });
+  });
+})();
+
+// ── INVESTMENT DATA (fuente: _CONSO_BUDGET_PLANNING_31052025.xlsx / _31.12.2025.xlsx) ───
+// a25 = ACTUAL 2025 (12 meses) · a26 = ACTUAL 2026 (Jan-May, null resto) · fc26 = FORECAST 2026
+const INVESTMENT_DATA = {
+ 'ALL COUNTRIES': {
+  a25:  [{inv:3111344,brand:697148,acq:617729,eng:1796467,disc:1895570},
+   {inv:3720513,brand:870102,acq:563137,eng:2287274,disc:2390189},
+   {inv:4491795,brand:1185994,acq:597332,eng:2708469,disc:2915418},
+   {inv:3833441,brand:1278400,acq:571464,eng:1983577,disc:2209718},
+   {inv:4200092,brand:1523524,acq:633871,eng:2042697,disc:2328167},
+   {inv:3831378,brand:1325943,acq:616447,eng:1888988,disc:2237342},
+   {inv:3337652,brand:1261666,acq:588260,eng:1487726,disc:1777543},
+   {inv:3000033,brand:1132175,acq:509552,eng:1358306,disc:1656677},
+   {inv:3446214,brand:1238003,acq:522197,eng:1686014,disc:2027303},
+   {inv:4195574,brand:1649978,acq:573452,eng:1972144,disc:2347992},
+   {inv:4304194,brand:2079475,acq:429669,eng:1795050,disc:2212221},
+   {inv:3475252,brand:1582910,acq:468869,eng:1425183,disc:1819593}],
+  a26:  [{inv:3154370,brand:1378733,acq:434530,eng:1341107,disc:1537468},
+   {inv:3817109,brand:2070647,acq:296014,eng:1450448,disc:1725019},
+   {inv:4528024,brand:2502162,acq:302394,eng:1723468,disc:1953236},
+   {inv:4901217,brand:2700712,acq:402655,eng:1797850,disc:2031265},
+   {inv:4519353,brand:2333869,acq:501743,eng:1683741,disc:1980665},
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null],
+  fc26: [{inv:3796674,brand:1537724,acq:565695,eng:1693255,disc:1838316},
+   {inv:4363224,brand:1991301,acq:627705,eng:1744218,disc:1920260},
+   {inv:4967403,brand:2297048,acq:696003,eng:1974352,disc:2128495},
+   {inv:4339471,brand:2198504,acq:653470,eng:1487497,disc:1654185},
+   {inv:4748218,brand:2407439,acq:696901,eng:1643878,disc:1815235},
+   {inv:4373120,brand:1986539,acq:660279,eng:1726302,disc:1889338},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0}],
+ },
+ 'AR': {
+  a25:  [{inv:882949,brand:318675,acq:337283,eng:226992,disc:252447},
+   {inv:815876,brand:332342,acq:264410,eng:219124,disc:246102},
+   {inv:1041010,brand:390917,acq:270111,eng:379982,disc:413797},
+   {inv:1102776,brand:498963,acq:294754,eng:309059,disc:334085},
+   {inv:1190074,brand:547357,acq:281268,eng:361449,disc:387688},
+   {inv:1116233,brand:503693,acq:280891,eng:331649,disc:380734},
+   {inv:1009268,brand:454782,acq:245100,eng:309386,disc:351966},
+   {inv:1001446,brand:462037,acq:227278,eng:312131,disc:340444},
+   {inv:875528,brand:383110,acq:232502,eng:259916,disc:301516},
+   {inv:1077669,brand:475084,acq:280228,eng:322357,disc:364884},
+   {inv:1122178,brand:606021,acq:183631,eng:332526,disc:395085},
+   {inv:1124131,brand:566019,acq:237146,eng:320966,disc:392143}],
+  a26:  [{inv:792503,brand:406812,acq:164993,eng:220698,disc:318139},
+   {inv:905693,brand:613795,acq:42409,eng:249489,disc:340542},
+   {inv:1069815,brand:748631,acq:49064,eng:272120,disc:367382},
+   {inv:1504657,brand:1020088,acq:156802,eng:327767,disc:412384},
+   {inv:1188663,brand:611381,acq:237452,eng:339830,disc:432709},
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null],
+  fc26: [{inv:831635,brand:406813,acq:155514,eng:269308,disc:288090},
+   {inv:862099,brand:421698,acq:161206,eng:279194,disc:298666},
+   {inv:1001383,brand:521715,acq:195191,eng:284478,disc:304317},
+   {inv:1053958,brand:514022,acq:180574,eng:359362,disc:384424},
+   {inv:1077138,brand:525711,acq:184996,eng:366431,disc:391986},
+   {inv:1050447,brand:531008,acq:184575,eng:334864,disc:358218},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0}],
+ },
+ 'CL': {
+  a25:  [{inv:224159,brand:37012,acq:70502,eng:116645,disc:122244},
+   {inv:222319,brand:41896,acq:62995,eng:117429,disc:122087},
+   {inv:279428,brand:35471,acq:71501,eng:172456,disc:250287},
+   {inv:387989,brand:154650,acq:86903,eng:146436,disc:238531},
+   {inv:308696,brand:58879,acq:98819,eng:150998,disc:270277},
+   {inv:298665,brand:49088,acq:95789,eng:153788,disc:253296},
+   {inv:415742,brand:138840,acq:93385,eng:183516,disc:281077},
+   {inv:397769,brand:132025,acq:75972,eng:189771,disc:295022},
+   {inv:255669,brand:32215,acq:73030,eng:150423,disc:243664},
+   {inv:407930,brand:168263,acq:72506,eng:167160,disc:245747},
+   {inv:459707,brand:218788,acq:66752,eng:174167,disc:258353},
+   {inv:463838,brand:243955,acq:64676,eng:155207,disc:265287}],
+  a26:  [{inv:297235,brand:137068,acq:59465,eng:100702,disc:104467},
+   {inv:250740,brand:100603,acq:51802,eng:98335,disc:100016},
+   {inv:525396,brand:201940,acq:63469,eng:259987,disc:261486},
+   {inv:558045,brand:226854,acq:63069,eng:268123,disc:256437},
+   {inv:444891,brand:213659,acq:42734,eng:188498,disc:190178},
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null],
+  fc26: [{inv:317956,brand:116684,acq:83025,eng:118247,disc:111316},
+   {inv:278316,brand:118105,acq:82251,eng:77961,disc:92290},
+   {inv:536360,brand:288972,acq:91217,eng:156170,disc:172240},
+   {inv:406363,brand:204286,acq:95221,eng:106857,disc:125877},
+   {inv:431256,brand:204439,acq:103287,eng:123530,disc:143248},
+   {inv:341802,brand:106389,acq:106162,eng:129250,disc:128686},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0}],
+ },
+ 'CO': {
+  a25:  [{inv:192023,brand:40350,acq:65400,eng:86273,disc:105871},
+   {inv:419105,brand:117198,acq:83684,eng:218223,disc:231228},
+   {inv:359934,brand:126394,acq:92214,eng:141325,disc:180365},
+   {inv:342845,brand:120798,acq:61492,eng:160555,disc:202535},
+   {inv:538911,brand:247779,acq:76853,eng:214279,disc:262285},
+   {inv:411665,brand:201888,acq:65835,eng:143942,disc:203567},
+   {inv:414179,brand:165393,acq:74049,eng:174737,disc:212026},
+   {inv:388429,brand:148419,acq:40373,eng:199637,disc:252164},
+   {inv:424278,brand:174433,acq:34358,eng:215487,disc:262614},
+   {inv:518709,brand:160557,acq:46874,eng:311278,disc:370119},
+   {inv:596711,brand:245806,acq:35502,eng:315403,disc:378664},
+   {inv:421863,brand:129564,acq:42650,eng:249649,disc:292299}],
+  a26:  [{inv:321094,brand:109210,acq:25046,eng:186838,disc:185835},
+   {inv:427681,brand:169242,acq:38565,eng:219874,disc:294426},
+   {inv:538543,brand:221278,acq:35040,eng:282225,disc:331537},
+   {inv:508039,brand:211336,acq:38094,eng:258609,disc:335679},
+   {inv:480770,brand:173288,acq:52847,eng:254635,disc:328897},
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null],
+  fc26: [{inv:270000,brand:110000,acq:60000,eng:100000,disc:150000},
+   {inv:362000,brand:165000,acq:65000,eng:132000,disc:185000},
+   {inv:365000,brand:165000,acq:70000,eng:130000,disc:190000},
+   {inv:410000,brand:190000,acq:75000,eng:145000,disc:195000},
+   {inv:435000,brand:195000,acq:75000,eng:165000,disc:215000},
+   {inv:410000,brand:170000,acq:75000,eng:165000,disc:215000},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0}],
+ },
+ 'ES': {
+  a25:  [{inv:1391268,brand:179554,acq:70687,eng:1141027,disc:1170814},
+   {inv:1830657,brand:251636,acq:88103,eng:1490918,disc:1519772},
+   {inv:2324315,brand:507228,acq:77668,eng:1739419,disc:1774820},
+   {inv:1481253,brand:313032,acq:61628,eng:1106593,disc:1140876},
+   {inv:1584560,brand:459699,acq:83705,eng:1041156,disc:1097295},
+   {inv:1389552,brand:331674,acq:93320,eng:964558,disc:1029561},
+   {inv:874184,brand:346868,acq:59846,eng:467470,disc:501864},
+   {inv:612341,brand:190098,acq:55720,eng:366523,disc:402615},
+   {inv:1255988,brand:433186,acq:63037,eng:759765,disc:794822},
+   {inv:1655917,brand:663470,acq:46506,eng:945941,disc:978380},
+   {inv:1617433,brand:780990,acq:69073,eng:767370,disc:821604},
+   {inv:1020653,brand:410225,acq:73681,eng:536747,disc:597297}],
+  a26:  [{inv:1255694,brand:576469,acq:96858,eng:582367,disc:641096},
+   {inv:1698848,brand:949792,acq:86764,eng:662292,disc:718469},
+   {inv:1923465,brand:1088341,acq:88566,eng:746558,disc:791385},
+   {inv:1839121,brand:1069339,acq:73294,eng:696488,disc:737754},
+   {inv:1906830,brand:1104575,acq:107984,eng:694271,disc:762445},
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null],
+  fc26: [{inv:1735596,brand:651120,acq:176849,eng:907627,disc:1012129},
+   {inv:2203682,brand:1023490,acq:229055,eng:951137,disc:1066472},
+   {inv:2337205,brand:1031051,acq:249015,eng:1057139,disc:1191593},
+   {inv:1955882,brand:1090175,acq:212243,eng:653464,disc:742573},
+   {inv:2203802,brand:1211618,acq:241420,eng:750764,disc:853141},
+   {inv:1962514,brand:905267,acq:202368,eng:854879,disc:971453},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0}],
+ },
+ 'PE': {
+  a25:  [{inv:367750,brand:103162,acq:60862,eng:203726,disc:220642},
+   {inv:368690,brand:93842,acq:62104,eng:212744,disc:240323},
+   {inv:411251,brand:97550,acq:67455,eng:246246,disc:265155},
+   {inv:439835,brand:144637,acq:64650,eng:230548,disc:261268},
+   {inv:471420,brand:172355,acq:65539,eng:233525,disc:266554},
+   {inv:514238,brand:185239,acq:67453,eng:261546,disc:300002},
+   {inv:477141,brand:122208,acq:75466,eng:279466,disc:348120},
+   {inv:439213,brand:163441,acq:75761,eng:200012,disc:265253},
+   {inv:517287,brand:178665,acq:80705,eng:257916,disc:321442},
+   {inv:403666,brand:143928,acq:75620,eng:184118,disc:280805},
+   {inv:364174,brand:134270,acq:70454,eng:159450,disc:243699},
+   {inv:283889,brand:129092,acq:45487,eng:111020,disc:189982}],
+  a26:  [{inv:393747,brand:110685,acq:71085,eng:211977,disc:235271},
+   {inv:411998,brand:162828,acq:73302,eng:175868,disc:210781},
+   {inv:322090,brand:142845,acq:62728,eng:116517,disc:140517},
+   {inv:370239,brand:104181,acq:68070,eng:197988,disc:223263},
+   {inv:335955,brand:126970,acq:56481,eng:152504,disc:193658},
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null],
+  fc26: [{inv:477000,brand:140000,acq:72000,eng:265000,disc:242000},
+   {inv:485000,brand:143000,acq:72000,eng:270000,disc:242000},
+   {inv:475000,brand:143000,acq:72000,eng:260000,disc:232000},
+   {inv:392000,brand:140000,acq:72000,eng:180000,disc:162000},
+   {inv:462000,brand:200000,acq:72000,eng:190000,disc:162000},
+   {inv:462000,brand:200000,acq:72000,eng:190000,disc:162000},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0}],
+ },
+ 'UY': {
+  a25:  [{inv:53194,brand:18395,acq:12995,eng:21804,disc:23552},
+   {inv:63865,brand:33188,acq:1841,eng:28836,disc:30677},
+   {inv:75858,brand:28434,acq:18383,eng:29041,disc:30994},
+   {inv:78743,brand:46320,acq:2037,eng:30386,disc:32423},
+   {inv:106432,brand:37455,acq:27687,eng:41290,disc:44068},
+   {inv:101025,brand:54361,acq:13159,eng:33505,disc:70182},
+   {inv:147140,brand:33575,acq:40414,eng:73151,disc:82490},
+   {inv:160835,brand:36155,acq:34448,eng:90232,disc:101179},
+   {inv:117466,brand:36394,acq:38565,eng:42507,disc:103245},
+   {inv:131685,brand:38676,acq:51718,eng:41290,disc:108057},
+   {inv:143991,brand:93600,acq:4257,eng:46134,disc:114816},
+   {inv:160878,brand:104055,acq:5229,eng:51594,disc:82585}],
+  a26:  [{inv:94097,brand:38489,acq:17083,eng:38525,disc:52660},
+   {inv:122149,brand:74387,acq:3172,eng:44590,disc:60785},
+   {inv:148715,brand:99127,acq:3527,eng:46061,disc:60929},
+   {inv:121115,brand:68914,acq:3326,eng:48875,disc:65748},
+   {inv:162244,brand:103996,acq:4245,eng:54003,disc:72778},
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null],
+  fc26: [{inv:83841,brand:32460,acq:18308,eng:33073,disc:34781},
+   {inv:91480,brand:39362,acq:18193,eng:33926,disc:35833},
+   {inv:119809,brand:64664,acq:18581,eng:36564,disc:38345},
+   {inv:121268,brand:60022,acq:18432,eng:42815,disc:44311},
+   {inv:139022,brand:70671,acq:20197,eng:48153,disc:49860},
+   {inv:146357,brand:73874,acq:20174,eng:52309,disc:53981},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0},
+   {inv:0,brand:0,acq:0,eng:0,disc:0}],
+ },
+};
+
+const AU_RAM_DATA = {
+ "ALL COUNTRIES": {
+  a25_ram:[4100965,4023746,3926580,3941870,3979848,4017239,4066131,4036153,4034156,4061089,4144492,4258045],
+  a26_ram:[4120725,4058054,3949012,3995174,4045319,null,null,null,null,null,null,null],
+  tgt_ram:[null,null,null,null,4143975,4167874,4311319,4279533,4277416,4305973,4394405,4514805],
+  a25_new:[155927,153934,187609,168444,180650,188772,199529,191908,181020,180167,187063,207879],
+  a26_new:[155257,155646,169779,158677,198051,null,null,null,null,null,null,null],
+  tgt_new:[null,null,null,null,185384,191189,215262,208044,198027,197738,205147,224015],
+  a25_react:[308996,328616,393131,360652,397933,397330,388307,365486,400198,428109,427380,457803],
+  a26_react:[320071,347556,417964,400105,416068,null,null,null,null,null,null,null],
+  tgt_react:[null,null,null,null,441702,442694,462371,435507,480952,511873,510321,543452],
+  a25_recur:[3636042,3541196,3345840,3412774,3401265,3431137,3478295,3478759,3452938,3452813,3530049,3592363],
+  a26_recur:[3645397,3554852,3361269,3436392,3431200,null,null,null,null,null,null,null],
+  tgt_recur:[null,null,null,null,3621978,3656704,3860191,3855794,3827457,3835054,3925411,3992526],
+  a25_churn:[-612144,-559769,-677906,-513806,-540605,-548711,-538944,-587372,-583215,-581343,-531040,-552129],
+  a26_churn:[-612648,-565875,-696781,-512593,-563974,null,null,null,null,null,null,null],
+  tgt_churn:[null,null,null,null,-605093,-592360,-430397,-682029,-671888,-671382,-619254,-648353],
+ },
+ "AR": {
+  a25_ram:[1323398,1318664,1307314,1316527,1320698,1317656,1348032,1358338,1354846,1353405,1395782,1465706],
+  a26_ram:[1423934,1405462,1367964,1381210,1369893,null,null,null,null,null,null,null],
+  tgt_ram:[null,null,null,null,1391867,1392415,1442664,1453693,1449956,1448414,1493766,1568599],
+  a25_new:[57342,57013,67208,57554,56417,54343,64186,56451,48413,54838,63773,73976],
+  a26_new:[50182,51011,53774,50273,52181,null,null,null,null,null,null,null],
+  tgt_new:[null,null,null,null,52011,49605,66816,59662,51797,58124,67259,77103],
+  a25_react:[97273,106173,122439,111199,117990,114850,127880,116672,108029,123502,139023,148196],
+  a26_react:[96017,116889,134733,126212,119594,null,null,null,null,null,null,null],
+  tgt_react:[null,null,null,null,133854,131812,158286,145768,135779,153839,172897,184218],
+  a25_recur:[1168783,1155478,1117667,1147774,1146291,1148463,1155966,1185215,1198404,1175065,1192986,1243534],
+  a26_recur:[1277735,1237562,1179457,1204725,1198118,null,null,null,null,null,null,null],
+  tgt_recur:[null,null,null,null,1271559,1277327,1284406,1313653,1329140,1307096,1327672,1381999],
+  a25_churn:[-175764,-167920,-200997,-159540,-170236,-172235,-161690,-162817,-159934,-179781,-160419,-152248],
+  a26_churn:[-187971,-186342,-225931,-163239,-183092,null,null,null,null,null,null,null],
+  tgt_churn:[null,null,null,null,-176373,-180097,-174337,-195856,-189942,-209621,-191386,-185829],
+ },
+ "ES": {
+  a25_ram:[1415581,1388697,1369829,1394653,1433629,1475948,1492534,1455799,1446973,1438736,1437117,1449406],
+  a26_ram:[1404319,1385226,1354722,1380429,1443660,null,null,null,null,null,null,null],
+  tgt_ram:[null,null,null,null,1482514,1504634,1614325,1574592,1565046,1556137,1554386,1567678],
+  a25_new:[61701,57908,77120,72459,80870,91205,87193,85487,85274,73423,65058,70595],
+  a26_new:[58582,54995,69686,67822,96710,null,null,null,null,null,null,null],
+  tgt_new:[null,null,null,null,76717,86246,88079,85793,86484,75037,66536,71694],
+  a25_react:[129348,121381,163228,148844,158398,169993,152649,137031,176491,169749,159553,184594],
+  a26_react:[135793,128147,160871,155993,175175,null,null,null,null,null,null,null],
+  tgt_react:[null,null,null,null,166767,178269,178110,158675,208796,200520,187688,215495],
+  a25_recur:[1224532,1209408,1129481,1173350,1194361,1214750,1252692,1233281,1185208,1195564,1212506,1194217],
+  a26_recur:[1209944,1202084,1124165,1156614,1171775,null,null,null,null,null,null,null],
+  tgt_recur:[null,null,null,null,1239030,1240118,1285320,1312500,1318134,1356618,1380228,1373609],
+  a25_churn:[-238896,-206173,-259216,-196479,-200292,-218879,-223256,-259253,-270591,-251409,-226230,-242900],
+  a26_churn:[-239462,-202275,-261125,-198081,-208654,null,null,null,null,null,null,null],
+  tgt_churn:[null,null,null,null,-175201,-242396,-219314,-239009,-238834,-256796,-251946,-260843],
+ },
+ "CO": {
+  a25_ram:[541325,518880,468079,447960,439243,435217,434031,424011,425582,450391,469910,477802],
+  a26_ram:[441392,430797,413624,422504,418925,null,null,null,null,null,null,null],
+  tgt_ram:[null,null,null,null,444675,443893,406861,397468,398941,422197,440494,447892],
+  a25_new:[10500,14140,12552,9387,12272,12983,15007,15651,14187,18308,17955,19383],
+  a26_new:[10916,15673,13954,13571,16614,null,null,null,null,null,null,null],
+  tgt_new:[null,null,null,null,17266,17818,21415,22440,20808,25519,24961,26002],
+  a25_react:[29679,43146,36557,36319,55156,47344,42328,43591,47943,62826,56152,50394],
+  a26_react:[31502,45159,51298,45436,45746,null,null,null,null,null,null,null],
+  tgt_react:[null,null,null,null,69314,61237,59563,60589,66720,85730,77346,69213],
+  a25_recur:[501146,461594,418970,402254,371815,374890,376696,364769,363452,369257,395803,408025],
+  a26_recur:[398974,369965,348372,363497,356565,null,null,null,null,null,null,null],
+  tgt_recur:[null,null,null,null,358095,364838,373929,363893,363505,369382,393502,403249],
+  a25_churn:[-82548,-79731,-99910,-65825,-76145,-64353,-58521,-69262,-60559,-56325,-54588,-61885],
+  a26_churn:[-78828,-71420,-82416,-50127,-65939,null,null,null,null,null,null,null],
+  tgt_churn:[null,null,null,null,-120225,-79836,-69964,-91014,-83417,-81651,-87129,-92560],
+ },
+ "CL": {
+  a25_ram:[400586,380774,374734,372708,377951,375858,377344,381261,389111,398129,407129,417856],
+  a26_ram:[407792,389417,379673,375856,379043,null,null,null,null,null,null,null],
+  tgt_ram:[null,null,null,null,383748,381308,394966,399066,407282,416722,426142,437370],
+  a25_new:[12872,10101,12919,11969,13763,12517,14342,15852,15719,15957,16922,19760],
+  a26_new:[15181,11635,13372,11629,13139,null,null,null,null,null,null,null],
+  tgt_new:[null,null,null,null,16186,14597,16685,18527,18084,18563,19822,22395],
+  a25_react:[28418,25870,39828,34395,37165,32798,34046,36258,36050,38571,37151,38228],
+  a26_react:[28842,25381,40164,35647,37276,null,null,null,null,null,null,null],
+  tgt_react:[null,null,null,null,39409,34818,39498,41967,41622,44783,42980,43997],
+  a25_recur:[359296,344803,321987,326344,327023,330543,328956,329151,337342,343601,353056,359868],
+  a26_recur:[363769,352401,326137,328580,328628,null,null,null,null,null,null,null],
+  tgt_recur:[null,null,null,null,357655,361306,368947,369327,378134,384603,394955,402592],
+  a25_churn:[-56820,-55783,-58787,-48390,-45685,-47408,-46902,-48193,-43919,-45510,-45073,-47261],
+  a26_churn:[-54087,-55388,-63269,-51093,-47228,null,null,null,null,null,null,null],
+  tgt_churn:[null,null,null,null,-47031,-51944,-41774,-55803,-51688,-53236,-52996,-55164],
+ },
+ "PE": {
+  a25_ram:[358844,354981,346746,349355,346007,347827,346925,347414,346891,347829,357622,361240],
+  a26_ram:[358060,360708,348552,347875,343667,null,null,null,null,null,null,null],
+  tgt_ram:[null,null,null,null,350271,351010,363959,364472,363923,364907,375181,378977],
+  a25_new:[10570,11520,14068,14002,13528,13837,14860,14541,13645,13518,18307,16256],
+  a26_new:[16198,18177,14238,10823,13624,null,null,null,null,null,null,null],
+  tgt_new:[null,null,null,null,18818,18413,19387,19222,18501,18611,24380,21124],
+  a25_react:[21561,27624,26151,25662,24093,26805,26427,26796,26645,27952,28945,28142],
+  a26_react:[23635,26010,24101,30123,31782,null,null,null,null,null,null,null],
+  tgt_react:[null,null,null,null,27142,29693,34134,35044,35,36280,37405,36],
+  a25_recur:[326713,315837,306527,309691,308386,307185,305638,306077,306601,306359,310370,316842],
+  a26_recur:[318227,316521,310213,306929,298261,null,null,null,null,null,null,null],
+  tgt_recur:[null,null,null,null,342114,340954,349414,350010,351416,352618,358356,365197],
+  a25_churn:[-50554,-43007,-48454,-37055,-40969,-38822,-42189,-40848,-40813,-40532,-37459,-40780],
+  a26_churn:[-43013,-41532,-50487,-41623,-49614,null,null,null,null,null,null,null],
+  tgt_churn:[null,null,null,null,-49780,-47120,-39646,-52925,-52860,-52300,-49154,-54944],
+ },
+ "UY": {
+  a25_ram:[61231,61750,59878,60667,62320,64733,67265,69330,70753,72599,76932,86035],
+  a26_ram:[85228,86444,84477,87300,90131,null,null,null,null,null,null,null],
+  tgt_ram:[null,null,null,null,90900,94614,94487,97388,99387,101980,108066,120853],
+  a25_new:[2942,3252,3742,3073,3800,3887,3941,3926,3782,4123,5048,7909],
+  a26_new:[4198,4155,4755,4559,5783,null,null,null,null,null,null,null],
+  tgt_new:[null,null,null,null,5341,5390,5519,5515,5297,5800,7038,10854],
+  a25_react:[2717,4422,4928,4233,5131,5540,4977,5138,5040,5509,6556,8249],
+  a26_react:[4282,5970,6797,6694,6495,null,null,null,null,null,null,null],
+  tgt_react:[null,null,null,null,7779,8197,7664,7934,7770,8478,10092,12641],
+  a25_recur:[55572,54076,51208,53361,53389,55306,58347,60266,61931,62967,65328,69877],
+  a26_recur:[76748,76319,72925,76047,77853,null,null,null,null,null,null,null],
+  tgt_recur:[null,null,null,null,77780,81026,84609,87385,89809,91328,94744,101206],
+  a25_churn:[-7562,-7155,-10542,-6517,-7278,-7014,-6386,-6999,-7399,-7786,-7271,-7055],
+  a26_churn:[-9287,-8918,-13553,-8430,-9447,null,null,null,null,null,null,null],
+  tgt_churn:[null,null,null,null,-12229,-9874,-10005,-10406,-11025,-11548,-10862,-10667],
+ },
+};
+
+const SR_DATA = {
+ "ALL COUNTRIES": {
+  a24:[null,null,null,null,null,null,null,null,null,null,null,null],
+  a25:[0.7002,0.6929,0.6871,0.7049,0.7000,0.6826,0.6830,0.7020,0.7103,0.7078,0.6751,0.6424],
+  a26:[0.7237,0.7121,0.7301,0.7179,0.7062,null,null,null,null,null,null,null],
+ },
+ "AR": {
+  a24:[0.7304,0.7449,0.6745,0.7208,0.7436,0.6853,0.6265,0.6818,0.7021,0.685,0.6551,0.6009],
+  a25:[0.6975,0.6819,0.6768,0.7338,0.7252,0.723,0.7031,0.7517,0.767,0.7417,0.6911,0.61],
+  a26:[0.7432,0.701,0.7049,0.6863,0.7005,null,null,null,null,null,null,null],
+ },
+ "CL": {
+  a24:[0.6764,0.6979,0.6675,0.6505,0.6503,0.6599,0.6906,0.64,0.6597,0.6584,0.6188,0.6064],
+  a25:[0.6748,0.6619,0.6408,0.6372,0.6209,0.6138,0.6415,0.6094,0.5711,0.612,0.6227,0.6098],
+  a26:[0.6783,0.6938,0.7039,0.692,0.678,null,null,null,null,null,null,null],
+ },
+ "CO": {
+  a24:[0.6627,0.6241,0.6854,0.7042,0.7011,0.6652,0.6526,0.7195,0.6932,0.6718,0.5834,0.5574],
+  a25:[0.7665,0.725,0.7218,0.6962,0.7013,0.6834,0.7049,0.6439,0.6613,0.6353,0.5569,0.4895],
+  a26:[0.6687,0.6616,0.6839,0.6758,0.6521,null,null,null,null,null,null,null],
+ },
+ "ES": {
+  a24:[0.6966,0.7184,0.7356,0.7273,0.7217,0.6844,0.6891,0.7085,0.7007,0.7013,0.6906,0.6469],
+  a25:[0.6713,0.6722,0.6779,0.675,0.661,0.6022,0.623,0.6477,0.6492,0.6765,0.7,0.7071],
+  a26:[0.7395,0.694,0.7314,0.7096,0.6623,null,null,null,null,null,null,null],
+ },
+ "PE": {
+  a24:[0.8019,0.7926,0.7949,0.7908,0.8121,0.7883,0.7409,0.7227,0.7536,0.7577,0.7415,0.7113],
+  a25:[0.7809,0.7254,0.7237,0.7157,0.7155,0.725,0.7162,0.7371,0.7491,0.767,0.7258,0.727],
+  a26:[0.7292,0.7318,0.752,0.7671,0.7573,null,null,null,null,null,null,null],
+ },
+ "UY": {
+  a24:[0.5702,0.5983,0.5276,0.6093,0.6885,0.6886,0.6751,0.7173,0.7195,0.722,0.6828,0.5557],
+  a25:[0.7111,0.6877,0.7261,0.7844,0.7639,0.746,0.7638,0.766,0.7849,0.8028,0.7527,0.6494],
+  a26:[0.763,0.7944,0.8145,0.7788,0.7832,null,null,null,null,null,null,null],
+ },
+};
+
+const RAM_COMP_DATA = {
+ "ALL COUNTRIES": {
+  "New": {
+   a25:[155927,153934,187609,168444,180650,188772,199529,191908,181020,180167,187063,207879],
+   a26:[155257,155646,169779,158678,198051,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,185384,191189,215262,208044,198027,197738,205147,224015],
+   model:[null,null,null,null,198052,196331,206762,200244,190998,191114,198684,217404],
+  },
+  "Reactivated": {
+   a25:[308996,328616,393131,360652,397933,397330,388307,365486,400198,428109,427380,457803],
+   a26:[320071,347556,417965,400104,416067,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,441702,442694,462371,435507,480952,511873,510321,543452],
+   model:[null,null,null,null,416066,433118,423116,398202,439388,467248,465443,495248],
+  },
+  "Recurrent": {
+   a25:[3636042,3541196,3345840,3412774,3401265,3431137,3478295,3478759,3452938,3452813,3530049,3592363],
+   a26:[3645397,3554852,3361273,3436398,3431206,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,3621978,3656704,3860191,3855794,3827457,3835054,3925411,3992526],
+   model:[null,null,null,null,3431202,3508904,3518081,3477710,3416055,3386666,3429439,3450420],
+  },
+  "Churn": {
+   a25:[-612144,-559769,-677906,-513806,-540605,-548711,-538944,-587372,-583215,-581343,-531040,-552129],
+   a26:[-612648,-565875,-696783,-512592,-563974,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,-605093,-592360,-430397,-682029,-671888,-671382,-619254,-648353],
+   model:[null,null,null,null,-563975,-569181,-556454,-604098,-592664,-584367,-530157,-553260],
+  },
+ },
+ "AR": {
+  "New": {
+   a25:[57342,57013,67208,57554,56417,54343,64186,56451,48413,54838,63773,73976],
+   a26:[50182,51011,53783,50275,52177,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,52011,49605,66816,59662,51797,58124,67259,77103],
+   model:[null,null,null,null,52179,49252,57242,50940,44075,49291,56843,64939],
+  },
+  "Reactivated": {
+   a25:[97273,106173,122439,111199,117990,114850,127880,116672,108029,123502,139023,148196],
+   a26:[96017,116889,134735,126209,119596,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,133854,131812,158286,145768,135779,153839,172897,184218],
+   model:[null,null,null,null,119593,125747,139337,128151,119216,134898,151413,161118],
+  },
+  "Recurrent": {
+   a25:[1168783,1155478,1117667,1147774,1146291,1148463,1155966,1185215,1198404,1175065,1192986,1243534],
+   a26:[1277735,1237562,1179484,1204759,1198146,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,1271559,1277327,1284406,1313653,1329140,1307096,1327672,1381999],
+   model:[null,null,null,null,1198176,1195853,1178288,1179571,1167630,1122845,1114701,1133437],
+  },
+  "Churn": {
+   a25:[-175764,-167920,-200997,-159540,-170236,-172235,-161690,-162817,-159934,-179781,-160419,-152248],
+   a26:[-187971,-186342,-225934,-163243,-183097,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,-176373,-180097,-174337,-195856,-189942,-209621,-191386,-185829],
+   model:[null,null,null,null,-183091,-178699,-163871,-161261,-152102,-164282,-142796,-132327],
+  },
+ },
+ "ES": {
+  "New": {
+   a25:[61701,57908,77120,72459,80870,91205,87193,85487,85274,73423,65058,70595],
+   a26:[58582,54995,69681,67822,96714,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,76717,86246,88079,85793,86484,75037,66536,71694],
+   model:[null,null,null,null,96719,103650,102554,103787,108550,97590,89555,99752],
+  },
+  "Reactivated": {
+   a25:[129348,121381,163228,148844,158398,169993,152649,137031,176491,169749,159553,184594],
+   a26:[135793,128147,160875,155990,175174,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,166767,178269,178110,158675,208796,200520,187688,215495],
+   model:[null,null,null,null,175186,184489,166208,149090,197524,190982,179965,208011],
+  },
+  "Recurrent": {
+   a25:[1224532,1209408,1129481,1173350,1194361,1214750,1252692,1233281,1185208,1195564,1212506,1194217],
+   a26:[1209944,1202084,1124137,1156592,1171754,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,1239030,1240118,1285320,1312500,1318134,1356618,1380228,1373609],
+   model:[null,null,null,null,1171719,1197592,1225045,1193746,1135166,1138453,1149310,1124752],
+  },
+  "Churn": {
+   a25:[-238896,-206173,-259216,-196479,-200292,-218879,-223256,-259253,-270591,-251409,-226230,-242900],
+   a26:[-239462,-202275,-261126,-198074,-208650,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,-175201,-242396,-219314,-239009,-238834,-256796,-251946,-260843],
+   model:[null,null,null,null,-208654,-230184,-237090,-280378,-294172,-274264,-247695,-270608],
+  },
+ },
+ "CO": {
+  "New": {
+   a25:[10500,14140,12552,9387,12272,12983,15007,15651,14187,18308,17955,19383],
+   a26:[10916,15673,13952,13571,16614,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,17266,17818,21415,22440,20808,25519,24961,26002],
+   model:[null,null,null,null,16614,19064,22750,24566,23453,29590,29752,31834],
+  },
+  "Reactivated": {
+   a25:[29679,43146,36557,36319,55156,47344,42328,43591,47943,62826,56152,50394],
+   a26:[31502,45159,51299,45435,45749,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,69314,61237,59563,60589,66720,85730,77346,69213],
+   model:[null,null,null,null,45753,50025,43989,43023,45478,55997,48321,41271],
+  },
+  "Recurrent": {
+   a25:[501146,461594,418970,402254,371815,374890,376696,364769,363452,369257,395803,408025],
+   a26:[398974,369965,348377,363500,356568,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,358095,364838,373929,363893,363505,369382,393502,403249],
+   model:[null,null,null,null,356580,381011,389462,385594,391761,404779,438330,456486],
+  },
+  "Churn": {
+   a25:[-82548,-79731,-99910,-65825,-76145,-64353,-58521,-69262,-60559,-56325,-54588,-61885],
+   a26:[-78828,-71420,-82414,-50128,-65938,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,-120225,-79836,-69964,-91014,-83417,-81651,-87129,-92560],
+   model:[null,null,null,null,-65939,-52189,-45139,-50446,-41795,-37152,-33672,-36460],
+  },
+ },
+ "CL": {
+  "New": {
+   a25:[12872,10101,12919,11969,13763,12517,14342,15852,15719,15957,16922,19760],
+   a26:[15181,11635,13375,11628,13138,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,16186,14597,16685,18527,18084,18563,19822,22395],
+   model:[null,null,null,null,13130,11374,11743,11826,10359,9417,8757,8426],
+  },
+  "Reactivated": {
+   a25:[28418,25870,39828,34395,37165,32798,34046,36258,36050,38571,37151,38228],
+   a26:[28842,25381,40163,35650,37276,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,39409,34818,39498,41967,41622,44783,42980,43997],
+   model:[null,null,null,null,37278,33850,35062,37032,36508,39045,37246,37895],
+  },
+  "Recurrent": {
+   a25:[359296,344803,321987,326344,327023,330543,328956,329151,337342,343601,353056,359868],
+   a26:[363769,352401,326140,328581,328632,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,357655,361306,368947,369327,378134,384603,394955,402592],
+   model:[null,null,null,null,328641,336320,328255,322234,323408,322320,324195,323533],
+  },
+  "Churn": {
+   a25:[-56820,-55783,-58787,-48390,-45685,-47408,-46902,-48193,-43919,-45510,-45073,-47261],
+   a26:[-54087,-55388,-63269,-51097,-47227,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,-47031,-51944,-41774,-55803,-51688,-53236,-52996,-55164],
+   model:[null,null,null,null,-47232,-50720,-49967,-50586,-46108,-47200,-46406,-48064],
+  },
+ },
+ "PE": {
+  "New": {
+   a25:[10570,11520,14068,14002,13528,13837,14860,14541,13645,13518,18307,16256],
+   a26:[16198,18177,14235,10823,13626,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,18818,18413,19387,19222,18501,18611,24380,21124],
+   model:[null,null,null,null,13627,9412,6797,6572,6325,6363,8335,7222],
+  },
+  "Reactivated": {
+   a25:[21561,27624,26151,25662,24093,26805,26427,26796,26645,27952,28945,28142],
+   a26:[23635,26010,24100,30125,31780,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,27142,29693,34134,35044,35,36280,37405,36],
+   model:[null,null,null,null,31774,35191,35944,38278,39605,42476,45263,45],
+  },
+  "Recurrent": {
+   a25:[326713,315837,306527,309691,308386,307185,305638,306077,306601,306359,310370,316842],
+   a26:[318227,316521,310216,306929,298261,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,342114,340954,349414,350010,351416,352618,358356,365197],
+   model:[null,null,null,null,298263,309867,300048,292288,285157,277799,273850,270447],
+  },
+  "Churn": {
+   a25:[-50554,-43007,-48454,-37055,-40969,-38822,-42189,-40848,-40813,-40532,-37459,-40780],
+   a26:[-43013,-41532,-50491,-41622,-49616,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,-49780,-47120,-39646,-52925,-52860,-52300,-49154,-54944],
+   model:[null,null,null,null,-49614,-50079,-56756,-56466,-58232,-59596,-57000,-65770],
+  },
+ },
+ "UY": {
+  "New": {
+   a25:[2942,3252,3742,3073,3800,3887,3941,3926,3782,4123,5048,7909],
+   a26:[4198,4155,4753,4559,5782,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,5341,5390,5519,5515,5297,5800,7038,10854],
+   model:[null,null,null,null,5783,5929,6128,6250,6125,6839,8341,12864],
+  },
+  "Reactivated": {
+   a25:[2717,4422,4928,4233,5131,5540,4977,5138,5040,5509,6556,8249],
+   a26:[4282,5970,6793,6695,6492,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,7779,8197,7664,7934,7770,8478,10092,12641],
+   model:[null,null,null,null,6482,7255,6287,6254,5877,6140,6986,8345],
+  },
+  "Recurrent": {
+   a25:[55572,54076,51208,53361,53389,55306,58347,60266,61931,62967,65328,69877],
+   a26:[76748,76319,72919,76037,77845,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,77780,81026,84609,87385,89809,91328,94744,101206],
+   model:[null,null,null,null,77823,81800,86651,89915,92841,94851,98855,106085],
+  },
+  "Churn": {
+   a25:[-7562,-7155,-10542,-6517,-7278,-7014,-6386,-6999,-7399,-7786,-7271,-7055],
+   a26:[-9287,-8918,-13549,-8428,-9446,null,null,null,null,null,null,null],
+   tgt:[null,null,null,null,-12229,-9874,-10005,-10406,-11025,-11548,-10862,-10667],
+   model:[null,null,null,null,-9445,-9235,-8484,-9305,-9891,-10411,-9780,-9572],
+  },
+ },
+};
+
+// ── HELPERS ──────────────────────────────────────────────────────────────────
+function sum(arr){ return arr.filter(v=>v!==null).reduce((a,b)=>a+b,0); }
+function fmt(val,cfg){ if(val===null||val===undefined) return '—'; return cfg.unit+(val/cfg.scale).toFixed(cfg.decimals)+cfg.suffix; }
+function fmtPct(val){ return (val>=0?'+':'')+val.toFixed(1)+'%'; }
+function yoyPct(v26,v25){ return (v25&&v25!==0)?((v26-v25)/Math.abs(v25)*100):null; }
+
+// ── STATE ────────────────────────────────────────────────────────────────────
+let currentCountry='ALL COUNTRIES', currentMetric='GMV B2C', chart=null;
+const fyHidden = new Set(); // 'est','sim','tgt'
+const SHOW_SIM = true; // ← cambiar a false para ocultar Simulación B2C
+
+// ── ESTIMATION ───────────────────────────────────────────────────────────────
+function calcEst(d){
+  const ytdIdx=d.a26.map((v,i)=>v!==null?i:-1).filter(i=>i>=0);
+  const from=ytdIdx.length>0?ytdIdx[ytdIdx.length-1]+1:0;
+
+  // YoY medio de actuals (para KPIs y fallback)
+  const pairs=ytdIdx.map(i=>(d.a25[i]&&d.a25[i]!==0)?(d.a26[i]-d.a25[i])/d.a25[i]:null).filter(v=>v!==null);
+  const avgYoY=pairs.length?pairs.reduce((a,b)=>a+b,0)/pairs.length:0;
+
+  // Ratio YTD acumulado vs target: solo meses donde target también es non-null
+  const pairedIdx=ytdIdx.filter(i=>d.tgt[i]!=null);
+  const ytdActual=pairedIdx.reduce((s,i)=>s+(d.a26[i]||0),0);
+  const ytdTgt=pairedIdx.reduce((s,i)=>s+(d.tgt[i]||0),0);
+  const gapPct=ytdTgt?(ytdActual-ytdTgt)/ytdTgt:0;
+  const ytdRatio=ytdTgt?ytdActual/ytdTgt:null;
+
+  // Tendencia: tgt[i] × (ytdActual / ytdTgt)
+  // Refleja si vas por encima/debajo del plan en promedio, con la forma estacional del target
+  // Fallback a YoY plano si no hay target válido
+  const estFull=MONTHS.map((_,i)=>{
+    if(i<from) return null;
+    if(ytdRatio!=null && d.tgt[i]!=null) return d.tgt[i]*ytdRatio;
+    return d.a25[i]!=null?d.a25[i]*(1+avgYoY):null;
+  });
+  return {estFull, estH2:estFull.map((v,i)=>i>=6?v:null), avgYoY, gapPct};
+}
+
+// ── CHURN H2 TARGET RATES (tasas objetivo H2, fuente: equipo) ───────────────
+const CHURN_H2_TGT_RATE = {
+  'CO': 17.88,
+};
+const CHURN_H2_SEASONAL = {
+  'CO': [null,null,null,null,null,null, 17.73, 21.31, 18.55, 16.62, 15.41, 17.65],
+};
+
+// ── RAM H2 YoY TARGETS (fuente: TARGET AU RAM - GONZALO.xlsx) ────────────────
+// Para New/Reactivated/Recurrent: % YoY target H2
+// Para Churn: tasa objetivo H2 (valor absoluto %)
+const RAM_H2_YOY_TGT = {
+  'ALL COUNTRIES': { New:  4.87, Reactivated: 18.83, Recurrent:  4.62, Churn: 13.8  },
+  'AR':            { New:  0.00, Reactivated: 20.00, Recurrent:  6.00, Churn: 12.37 },
+  'ES':            { New:  0.00, Reactivated: 15.00, Recurrent:  7.76, Churn: 15.20 },
+  'CO':            { New: 20.00, Reactivated: 30.00, Recurrent:-12.00, Churn: 17.88 },
+  'CL':            { New:  7.00, Reactivated: 10.00, Recurrent:  4.00, Churn: 11.65 },
+  'PE':            { New: 17.00, Reactivated: 20.00, Recurrent:  3.00, Churn: 12.26 },
+  'UY':            { New: 35.00, Reactivated: 50.00, Recurrent: 40.00, Churn: 10.02 },
+};
+
+
+// ── ESTIMATIONS DATA (fuente: estimations y req.csv) ────────────────────────
+// 18 meses: Ene2025 – Jun2026 (Jun2026 parcial*)
+const ESTIMATIONS_MONTHS = [
+  "Ene'25","Feb'25","Mar'25","Abr'25","May'25","Jun'25",
+  "Jul'25","Ago'25","Sep'25","Oct'25","Nov'25","Dic'25",
+  "Ene'26","Feb'26","Mar'26","Abr'26","May'26","Jun'26*"
+];
+const ESTIMATIONS_DATA = {
+  'ALL COUNTRIES': {
+    est: [19775183,19663080,23036373,20629916,22505087,22601326,23118190,21960740,21934106,22643447,24397045,28306502,19876126,19962658,22287619,21383539,23264105,9271492],
+    req: [9510204,9610100,11228175,10264955,11065227,11044586,11400806,10919699,10913590,11304389,11908256,12884001,9417745,9449641,10668168,10299993,11065650,4480314],
+  },
+  'AR': {
+    est: [7530593,7517756,8645022,7484535,8123949,7961626,9053454,8320637,7636532,8222209,9205495,11304532,7105184,7535773,8350347,8188021,8083402,3241376],
+    req: [3463320,3575743,4162820,3707142,3979570,3990150,4488812,4172130,3837881,4147705,4497877,5149199,3456504,3678542,4179098,4081850,4065797,1672448],
+  },
+  'CL': {
+    est: [2252653,1844630,2541868,2360456,2623230,2377250,2485997,2786734,2794066,2765320,2853932,3093642,2413516,1920109,2487962,2272875,2434237,956616],
+    req: [1103199,877412,1241857,1193824,1312133,1261013,1314155,1434223,1428262,1459670,1435681,1500169,1214182,927133,1214911,1130147,1211577,500375],
+  },
+  'CO': {
+    est: [2163513,2555677,2609312,2197967,2422457,2253615,2255550,2453098,2407232,2746697,3191603,3589106,1942855,2323826,2414706,2211535,2488816,951766],
+    req: [1354590,1592394,1541649,1366465,1495192,1345117,1414746,1532634,1501205,1627322,1893128,1935230,1034141,1232345,1285547,1242132,1360268,543072],
+  },
+  'ES': {
+    est: [5249140,4931782,6128331,5566184,6211305,6940214,6201958,5294069,6006310,5686586,5420308,6135072,5004628,4837026,5412489,5457284,6603983,2800682],
+    req: [2110061,1949342,2482452,2258939,2457865,2675406,2388333,2013214,2352835,2239540,2048951,2290597,1909970,1858405,2176857,2126491,2489725,1016156],
+  },
+  'PE': {
+    est: [2311267,2495615,2751322,2725749,2761398,2670178,2724186,2682675,2688819,2794760,3227912,3462502,2987031,2914522,3119609,2751232,3104464,1100150],
+    req: [1338552,1429885,1597137,1569744,1614008,1545368,1567129,1529489,1569447,1588822,1759898,1649664,1586922,1512264,1530954,1432848,1631058,619533],
+  },
+  'UY': {
+    est: [268017,317620,360518,295025,362748,398443,397045,423527,401147,427875,497795,721648,422912,431402,502506,502592,549203,220902],
+    req: [140482,185324,202260,168841,206459,227532,227631,238009,223960,241330,272721,359142,216026,240952,280801,286525,307225,128730],
+  },
+};
+// ── AGGREGATION HELPERS ──────────────────────────────────────────────────────
+const SUM_METRICS = new Set(['GMV B2C','DOs (DO B2C)','NCC']);
+// Para métricas de stock/ratio → media; para métricas de flujo → suma
+function agg(arr) {
+  const vals = arr.filter(v => v !== null && v !== undefined);
+  if (!vals.length) return 0;
+  return SUM_METRICS.has(currentMetric) ? sum(vals) : sum(vals)/vals.length;
+}
+
+// ── FY BLOCKS ────────────────────────────────────────────────────────────────
+function renderFY(d,cfg){
+  const {estFull,avgYoY}=calcEst(d);
+  const ytdCount=d.a26.filter(v=>v!==null).length;
+  const ytdSum=agg(d.a26.filter(v=>v!==null));
+
+  // FY = actuals for months with data + scenario for the rest
+  // This matches exactly what renderScenarios does
+  const fyEst = SUM_METRICS.has(currentMetric)
+    ? ytdSum + sum(estFull.slice(ytdCount).filter(v=>v!==null))
+    : agg([...d.a26.filter(v=>v!==null), ...estFull.slice(ytdCount).filter(v=>v!==null)]);
+  const fySim = SUM_METRICS.has(currentMetric)
+    ? ytdSum + sum(d.sim.slice(ytdCount).filter(v=>v!==null))
+    : agg([...d.a26.filter(v=>v!==null), ...d.sim.slice(ytdCount).filter(v=>v!==null)]);
+  const fyTgt = SUM_METRICS.has(currentMetric)
+    ? ytdSum + sum(d.tgt.slice(ytdCount).filter(v=>v!==null))
+    : agg([...d.a26.filter(v=>v!==null), ...d.tgt.slice(ytdCount).filter(v=>v!==null)]);
+
+  // 2025 FY for comparison
+  const fy25=agg(d.a25);
+
+  const cards=[
+
+    ...(SHOW_SIM ? [{key:'sim', label:'FY 2026 · Simulación B2C', value:fySim, cls:'sim',
+     badge: fy25?fmtPct(yoyPct(fySim,fy25)):null, up:fySim>=fy25,
+     badge2: fyTgt?fmtPct(yoyPct(fySim,fyTgt)):null, up2:fySim>=fyTgt}] : []),
+    {key:'tgt', label:'FY 2026 · Target', value:fyTgt, cls:'tgt',
+     badge: fy25?fmtPct(yoyPct(fyTgt,fy25)):null, up:fyTgt>=fy25,
+     badge2: null, up2:false},
+  ];
+
+  document.getElementById('fyStrip').innerHTML=cards.map(c=>`
+    <div class="fy-card ${c.cls}${fyHidden.has(c.key)?' hidden-card':''}" data-fy="${c.key}" title="Click para mostrar/ocultar en gráfico">
+      <span class="fy-eye">${fyHidden.has(c.key)?'👁️‍🗨️':'👁️'}</span>
+      <div class="fy-card-label">${c.label}</div>
+      <div class="fy-card-value">${fmt(c.value,cfg)}</div>
+      <div class="fy-card-sub">vs FY 2025: ${fmt(fy25,cfg)}</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;">
+        ${c.badge!==null?`<div class="fy-badge ${c.up?'up':'down'}">${c.badge} vs 2025</div>`:''}
+        ${c.badge2!==null?`<div class="fy-badge ${c.up2?'up':'down'}">${c.badge2} vs Target</div>`:''}
+      </div>
+    </div>`).join('');
+
+  // click to toggle
+  document.querySelectorAll('.fy-card[data-fy]').forEach(el=>{
+    el.addEventListener('click',()=>{
+      const k=el.dataset.fy;
+      if(fyHidden.has(k)) fyHidden.delete(k); else fyHidden.add(k);
+      render();
+    });
+  });
+}
+
+// toggle all
+document.getElementById('fyToggleAll').addEventListener('click',()=>{
+  const btn=document.getElementById('fyToggleAll');
+  if(fyHidden.size===3){ fyHidden.clear(); btn.textContent='Ocultar todo'; }
+  else{ ['est','sim','tgt'].forEach(k=>fyHidden.add(k)); btn.textContent='Mostrar todo'; }
+  render();
+});
+
+// ── KPI STRIP ────────────────────────────────────────────────────────────────
+function renderKPIs(d,cfg){
+  const {estH2,avgYoY}=calcEst(d);
+  const ytdVals=d.a26.filter(v=>v!==null);
+  const ytdCount=ytdVals.length;
+  const ytdLastIdx=d.a26.map((v,i)=>v!==null?i:-1).filter(i=>i>=0).pop()??0;
+  const ytdAvg=ytdCount?sum(ytdVals)/ytdCount:0;
+  const ytd25=sum(d.a25.slice(0,ytdCount));
+  const ytd26=sum(ytdVals);
+  const ytdYoY=yoyPct(ytd26,ytd25);
+
+  const estH2sum=agg(estH2.filter(v=>v!==null));
+  const h2Sim=agg(d.sim.slice(6).filter(v=>v!==null));
+  const h2_25=agg(d.a25.slice(6,12));
+  const h2tgt=agg(d.tgt.slice(6,12).filter(v=>v!==null));
+  const gapPct=h2tgt?yoyPct(estH2sum,h2tgt):null;
+  const simGapPct=h2tgt?yoyPct(h2Sim,h2tgt):null;
+  const simYoY=yoyPct(h2Sim,h2_25);
+  const h2tgtYoY=yoyPct(h2tgt,h2_25);
+
+  const usePct=PCT_BADGE_METRICS.has(currentMetric);
+
+  // GMV, DOs, NCC → mostrar suma YTD; resto → media mensual
+  const useSum = SUM_METRICS.has(currentMetric);
+  const ytdDisplay = useSum ? ytd26 : ytdAvg;
+  const ytdSubLabel = useSum
+    ? `Suma acumulada · Ene–${MONTHS[ytdLastIdx]}`
+    : `Media mensual · Ene–${MONTHS[ytdLastIdx]}`;
+
+  // Solo parear meses donde target también es non-null (evita ratio disparado en AU RAM)
+  const ytdPairedIdx=d.a26.map((v,i)=>v!==null&&d.tgt[i]!=null?i:-1).filter(i=>i>=0);
+  const ytdTgt=sum(ytdPairedIdx.map(i=>d.tgt[i]));
+  const ytdActualPaired=sum(ytdPairedIdx.map(i=>d.a26[i]));
+  const ytdVsTgt=ytdTgt?yoyPct(ytdActualPaired,ytdTgt):null;
+
+  const tendGapLabel = Math.abs(gapPct)<=0.5
+    ? `${(avgYoY*100).toFixed(1)}% YoY act. · tgt ${gapPct>=0?'+':''}${(gapPct*100).toFixed(1)}%`
+    : `${(avgYoY*100).toFixed(1)}% YoY (gap vs tgt fuera de rango)`;
+  const kpis=[
+    {label:'Actuals YTD 2026', value:fmt(ytdDisplay,cfg),
+     sub:ytdSubLabel,
+     badge: ytdYoY!==null?fmtPct(ytdYoY)+' YoY':null, up:ytdYoY>=0, accent:ytdYoY>=0?'green':'red',
+     badge2: ytdVsTgt!==null?fmtPct(ytdVsTgt)+' vs Target':null, up2:ytdVsTgt>=0},
+    {label:'H2 Target 2026', value:fmt(h2tgt,cfg),
+     sub:'Jul–Dic · Target original',
+     badge: h2tgtYoY!==null?fmtPct(h2tgtYoY)+' vs 2025':null, up:h2tgtYoY>=0, accent:'orange'},
+    {label:'Simulación B2C H2', value:fmt(h2Sim,cfg),
+     sub:'Jul–Dic · Estimación equipo B2C',
+     badge: simYoY!==null?fmtPct(simYoY)+' YoY':null, up:simYoY>=0, accent:simYoY>=0?'green':'red',
+     badge2: simGapPct!==null?fmtPct(simGapPct)+' vs Target':null, up2:simGapPct>=0},
+  ];
+
+  document.getElementById('kpiStrip').innerHTML=kpis.map(k=>`
+    <div class="kpi-card ${k.accent}">
+      <div class="kpi-label">${k.label}</div>
+      <div class="kpi-value">${k.value}</div>
+      <div class="kpi-sub">${k.sub}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${k.badge?`<div class="kpi-badge ${k.up?'up':'down'}">${k.badge}</div>`:''}
+        ${k.badge2?`<div class="kpi-badge ${k.up2?'up':'down'}">${k.badge2}</div>`:''}
+      </div>
+    </div>`).join('');
+}
+
+
+// ── SCENARIO STRIP ───────────────────────────────────────────────────────────
+const scHidden = new Set(); // 'h1', 'h2'
+function toggleScAll() {
+  const body = document.getElementById('scenarioBody');
+  const btn  = document.getElementById('scToggleAll');
+  const hidden = body.style.display === 'none';
+  body.style.display = hidden ? '' : 'none';
+  btn.textContent = hidden ? 'Ocultar bloque' : 'Mostrar bloque';
+}
+function toggleScHalf(half) {
+  if (scHidden.has(half)) scHidden.delete(half); else scHidden.add(half);
+  const btn = document.getElementById('scToggle' + half.toUpperCase() + half.slice(1).toLowerCase().replace('1','1').replace('2','2'));
+  // Update button labels
+  const b1 = document.getElementById('scToggleH1');
+  const b2 = document.getElementById('scToggleH2');
+  if (b1) b1.textContent = scHidden.has('h1') ? 'Mostrar H1' : 'Ocultar H1';
+  if (b2) b2.textContent = scHidden.has('h2') ? 'Mostrar H2' : 'Ocultar H2';
+  // Re-render scenarios only
+  const cfg = METRICS_CFG[currentMetric];
+  const d = ALL_DATA[currentCountry][currentMetric];
+  renderScenarios(d, cfg);
+}
+function renderScenarios(d, cfg) {
+  const {estH2, estFull, avgYoY} = calcEst(d);
+
+  // H1 actuals (always real)
+  const h1Actuals = d.a26.slice(0,6).filter(v=>v!==null);
+  const h1sum = h1Actuals.reduce((a,b)=>a+b,0);
+  const h1_25 = d.a25.slice(0,6).reduce((a,b)=>a+(b||0),0);
+
+  // H2 scenarios (raw sums for YoY%, display via agg)
+  const h2TendArr = estH2.filter(v=>v!==null);
+  const h2SimArr  = d.sim.slice(6).filter(v=>v!==null);
+  const h2TgtArr  = d.tgt.slice(6).filter(v=>v!==null);
+  const h2Tend  = agg(h2TendArr);
+  const h2Sim   = agg(h2SimArr);
+  const h2Tgt   = agg(h2TgtArr);
+  const h2_25   = agg(d.a25.slice(6).filter(v=>v!==null));
+
+  // FY 2025
+  const fy25 = agg(d.a25);
+
+  // Fix: compare H1 YoY only for months where actuals exist
+  const ytdCount = d.a26.filter(v=>v!==null).length;
+  const h1_25_same = d.a25.slice(0,ytdCount).reduce((a,b)=>a+(b||0),0);
+
+  // For FY tendencia/sim/tgt: fill missing H1 months (May-Jun) with estimation too
+  const h1TendRaw = h1sum + estFull.slice(ytdCount,6).filter(v=>v!==null).reduce((a,b)=>a+b,0);
+  const h1SimRaw  = h1sum + d.sim.slice(ytdCount,6).filter(v=>v!==null).reduce((a,b)=>a+b,0);
+  const h1TgtRaw  = d.tgt.slice(0,6).reduce((a,b)=>a+(b||0),0);
+  const h1_25_raw = d.a25.slice(0,6).reduce((a,b)=>a+(b||0),0);
+  const h1Tend = SUM_METRICS.has(currentMetric) ? h1TendRaw : agg([...h1Actuals, ...estFull.slice(ytdCount,6).filter(v=>v!==null)]);
+  const h1Sim  = SUM_METRICS.has(currentMetric) ? h1SimRaw  : agg([...h1Actuals, ...d.sim.slice(ytdCount,6).filter(v=>v!==null)]);
+  const h1Tgt  = agg(d.tgt.slice(0,6).filter(v=>v!==null));
+  const h1_25_full = agg(d.a25.slice(0,6).filter(v=>v!==null));
+
+  // FY correcto: para no-suma = media de los 12 meses proyectados, no h1avg+h2avg
+  const fyTendAll = [...h1Actuals, ...estFull.slice(ytdCount,6).filter(v=>v!==null), ...estH2.filter(v=>v!==null)];
+  const fySimAll  = [...h1Actuals, ...d.sim.slice(ytdCount,6).filter(v=>v!==null), ...d.sim.slice(6).filter(v=>v!==null)];
+  const fyTgtAll  = d.tgt.filter(v=>v!==null);
+
+  const fyTend = SUM_METRICS.has(currentMetric) ? h1TendRaw + h2TendArr.reduce((a,b)=>a+b,0) : agg(fyTendAll);
+  const fySim  = SUM_METRICS.has(currentMetric) ? h1SimRaw  + h2SimArr.reduce((a,b)=>a+b,0)  : agg(fySimAll);
+  const fyTgt  = SUM_METRICS.has(currentMetric) ? h1TgtRaw  + h2TgtArr.reduce((a,b)=>a+b,0)  : agg(fyTgtAll);
+  const fyTgtVal = fyTgt; // para badge vs target
+
+  const scenarios = [
+
+    ...(SHOW_SIM ? [{key:'sc-sim', scen:'sim', label:'Simulacion B2C', h1:h1Sim, h1base:h1_25_full, h2:h2Sim, h225:h2_25, fy:fySim, fy25:fy25}] : []),
+    {key:'sc-tgt', scen:'tgt', label:'Target', h1:h1Tgt, h1base:h1_25_full, h2:h2Tgt, h225:h2_25, fy:fyTgt, fy25:fy25},
+  ];
+
+  function fv(v) { return v!==null ? cfg.unit+(v/cfg.scale).toFixed(cfg.decimals)+cfg.suffix : '—'; }
+  function pct(v, base) {
+    if(v===null||!base||base===0) return null;
+    const p = (v-base)/Math.abs(base)*100;
+    return {txt:(p>=0?'+':'')+p.toFixed(1)+'%', up:p>=0};
+  }
+
+  document.getElementById('scenarioStrip').innerHTML = scenarios.map(s => {
+    const h1pct = pct(s.h1, s.h1base);
+    const h2pct = pct(s.h2, s.h225);
+    const fypct = pct(s.fy, s.fy25);
+    const fytgtpct = fyTgtVal ? pct(s.fy, fyTgtVal) : null;
+    return `
+    <div class="scenario-card ${s.key}">
+      <div class="sc-label">${s.label}</div>
+      <div class="sc-row">
+        ${scHidden.has('h1') ? '' : `<div class="sc-half">
+          <div class="sc-half-label">H1 Actuals</div>
+          <div class="sc-half-value">${fv(s.h1)}</div>
+          ${h1pct ? `<div class="sc-badge ${h1pct.up?'up':'down'}">${h1pct.txt}</div>` : ''}
+        </div>`}
+        ${(!scHidden.has('h1') && !scHidden.has('h2')) ? '<div class="sc-divider"></div>' : ''}
+        ${scHidden.has('h2') ? '' : `<div class="sc-half">
+          <div class="sc-half-label">H2</div>
+          <div class="sc-half-value">${fv(s.h2)}</div>
+          ${h2pct ? `<div class="sc-badge ${h2pct.up?'up':'down'}">${h2pct.txt}</div>` : '<div class="sc-badge" style="background:var(--m10);color:var(--gray-n60);">pendiente</div>'}
+        </div>`}
+      </div>
+      <div style="font-size:9px;color:var(--gray-n60);margin-top:2px;">FY: <b style="color:var(--m80)">${fv(s.fy)}</b>${s.fy&&fypct?` <span class="sc-badge ${fypct.up?'up':'down'}" style="padding:1px 5px;">${fypct.txt} YoY</span>`:''}${s.fy&&fytgtpct?` <span class="sc-badge ${fytgtpct.up?'up':'down'}" style="padding:1px 5px;">${fytgtpct.txt} vs Tgt</span>`:''}</div>
+    </div>`;
+  }).join('');
+}
+
+// Click en scenario cards → toggle fyHidden (sincronizado con FY cards)
+document.getElementById('scenarioStrip').addEventListener('click', e => {
+  const card = e.target.closest('[data-scen]');
+  if (!card) return;
+  const k = card.dataset.scen;
+  if (fyHidden.has(k)) fyHidden.delete(k); else fyHidden.add(k);
+  render();
+});
+
+// ── CHART ────────────────────────────────────────────────────────────────────
+function render(){
+  // Investment metric: custom view, skip standard render
+  if(currentMetric === 'Investment') {
+    const invCard = document.getElementById('investmentCard');
+    const mainChartCard = document.getElementById('mainChartCard');
+    const ramCard = document.getElementById('ramBreakdownCard');
+    const ramCCard = document.getElementById('ramCompCard');
+    const ramH2Card = document.getElementById('ramH2Card');
+    document.getElementById('fySection').style.display = 'none';
+    document.getElementById('scenarioSection').style.display = 'none';
+    document.getElementById('kpiStrip').innerHTML = '';
+    document.getElementById('ramH2Inline').style.display = 'none';
+    if(mainChartCard) mainChartCard.style.display = 'none';
+    if(ramCard) ramCard.style.display = 'none';
+    if(ramCCard) ramCCard.style.display = 'none';
+    if(ramH2Card) ramH2Card.style.display = 'none';
+    const estCardInv = document.getElementById('estCard');
+    if(estCardInv) estCardInv.style.display = 'none';
+    if(invCard) { invCard.style.display = ''; renderInvestment(); }
+    return;
+  }
+  // Estimations metric: custom view, skip standard render
+  if(currentMetric === 'Funnel') {
+    const mainChartCard = document.getElementById('mainChartCard');
+    const ramCard = document.getElementById('ramBreakdownCard');
+    const ramCCard = document.getElementById('ramCompCard');
+    const ramH2Card = document.getElementById('ramH2Card');
+    const invCard = document.getElementById('investmentCard');
+    const estCard = document.getElementById('estCard');
+    document.getElementById('fySection').style.display = 'none';
+    document.getElementById('scenarioSection').style.display = 'none';
+    document.getElementById('kpiStrip').innerHTML = '';
+    document.getElementById('ramH2Inline').style.display = 'none';
+    if(mainChartCard) mainChartCard.style.display = 'none';
+    if(ramCard) ramCard.style.display = 'none';
+    if(ramCCard) ramCCard.style.display = 'none';
+    if(ramH2Card) ramH2Card.style.display = 'none';
+    if(invCard) invCard.style.display = 'none';
+    if(estCard) { estCard.style.display = ''; renderEstimationsTab(); }
+    return;
+  }
+
+  // Restore standard blocks if coming back from Investment, SR% or Estimations
+  document.getElementById('fySection').style.display = 'none';
+  document.getElementById('scenarioSection').style.display = 'none';
+  const invCard2 = document.getElementById('investmentCard');
+  if(invCard2) invCard2.style.display = 'none';
+  const srCard2 = document.getElementById('srCard');
+  if(srCard2) srCard2.style.display = 'none';
+  const estCard2 = document.getElementById('estCard');
+  if(estCard2) estCard2.style.display = 'none';
+
+  const cfg=METRICS_CFG[currentMetric];
+  const d=ALL_DATA[currentCountry][currentMetric];
+  document.getElementById('chartTitle').textContent=currentMetric;
+  renderFY(d,cfg);
+  renderScenarios(d,cfg);
+  renderKPIs(d,cfg);
+
+  const sc=cfg.scale;
+  const ds25=d.a25.map(v=>v!==null?v/sc:null);
+  const ds26=d.a26.map(v=>v!==null?v/sc:null);
+  const dsSim=[...d.sim.map(v=>v!==null?v/sc:null)];
+  const dsTgt=d.tgt.map(v=>v!==null?v/sc:null);
+
+  const lastIdx=d.a26.map((v,i)=>v!==null?i:-1).filter(i=>i>=0).pop()??-1;
+  if(lastIdx>=0 && dsSim[lastIdx+1]!==null) dsSim[lastIdx]=ds26[lastIdx];
+
+  const {estFull}=calcEst(d);
+  const dsEst=estFull.map(v=>v!==null?v/sc:null);
+  if(lastIdx>=0) dsEst[lastIdx]=ds26[lastIdx];
+
+  // delta bars — YoY %
+  const dsDelta=MONTHS.map((_,i)=>{
+    const v26=d.a26[i]!==null?d.a26[i]:d.tgt[i];
+    return(v26!==null&&d.a25[i]!==null&&d.a25[i]!==0)?((v26-d.a25[i])/Math.abs(d.a25[i])*100):null;
+  });
+  // left axis: suppress x suffix for Do/User
+  const leftSuffix=currentMetric==='Do/User'?'':cfg.suffix;
+
+  // hidden from legend
+  const hiddenLabels=[...document.querySelectorAll('#chartLegend .legend-item.hidden')].map(el=>el.dataset.label);
+
+  const datasets=[
+    {type:'bar',   label:'Δ vs 2025',     data:dsDelta,
+     backgroundColor:dsDelta.map(v=>v===null?'transparent':v>=0?'rgba(170,170,170,0.35)':'rgba(231,74,65,0.25)'),
+     borderColor:'transparent', borderWidth:0, yAxisID:'yRight', order:10},
+    {type:'line',  label:'Actuals 2025',  data:ds25,   borderColor:'#C3AFF2',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C3AFF2',tension:0.35,yAxisID:'yLeft',order:5},
+    {type:'line',  label:'Actuals 2026',  data:ds26,   borderColor:'#1F123F',borderWidth:2.5,pointRadius:4,pointBackgroundColor:'#1F123F',tension:0.35,yAxisID:'yLeft',order:4},
+
+    ...(SHOW_SIM ? [{type:'line', label:'Simulación B2C',data:dsSim, borderColor:'#7145D6',borderWidth:2,borderDash:[6,4],pointRadius:3,pointBackgroundColor:'#7145D6',tension:0.35,yAxisID:'yLeft',order:2,hidden:fyHidden.has('sim')}] : []),
+    {type:'line',  label:'Target',        data:dsTgt,  borderColor:'#EA8C2E',borderWidth:2,borderDash:[4,3],pointRadius:2.5,pointBackgroundColor:'#EA8C2E',tension:0.35,yAxisID:'yLeft',order:1,hidden:fyHidden.has('tgt')},
+  ].map(ds=>({backgroundColor:ds.backgroundColor||'transparent',...ds}));
+
+  // re-apply legend hidden state
+  datasets.forEach((ds,i)=>{
+    if(hiddenLabels.includes(ds.label)) ds.hidden=true;
+  });
+
+  const ctx=document.getElementById('mainChart').getContext('2d');
+  if(chart) chart.destroy();
+  chart=new Chart(ctx,{
+    data:{labels:MONTHS,datasets},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'rgba(31,18,63,0.92)',titleColor:'#EFE9FC',bodyColor:'#DDD2F8',
+          padding:12,cornerRadius:10,
+          callbacks:{
+            label(ctx){
+              const v=ctx.raw; if(v===null) return null;
+              const i=ctx.dataIndex;
+              const tgtDs=datasets.find(d=>d.label==='Target');
+              const tgtV=tgtDs?tgtDs.data[i]:null;
+              if(ctx.dataset.label==='Δ vs 2025'){
+                let s=` Δ vs 2025: ${v>=0?'+':''}${v.toFixed(1)}%`;
+                const a26Ds=datasets.find(d=>d.label==='Actuals 2026');
+                const a26V=a26Ds?a26Ds.data[i]:null;
+                if(tgtV!=null&&a26V!=null){const vt=(a26V-tgtV)/Math.abs(tgtV)*100;s+=`   ·   vs Tgt: ${vt>=0?'+':''}${vt.toFixed(1)}%`;}
+                return s;
+              }
+              if(ctx.dataset.label==='Actuals 2026'){
+                return ` ${ctx.dataset.label}: ${cfg.unit}${v.toFixed(cfg.decimals)}${leftSuffix}`;
+              }
+              return ` ${ctx.dataset.label}: ${cfg.unit}${v.toFixed(cfg.decimals)}${leftSuffix}`;
+            }
+          }
+        }
+      },
+      scales:{
+        yLeft:{type:'linear',position:'left',grid:{color:'rgba(0,0,0,0.04)'},ticks:{color:'#717182',font:{size:11},callback:v=>cfg.unit+v.toFixed(cfg.decimals)+leftSuffix}},
+        yRight:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{color:'#aaaaaa',font:{size:10},callback:v=>(v>=0?'+':'')+v.toFixed(1)+'%'}},
+        x:{grid:{display:false},ticks:{color:'#717182',font:{size:11}}},
+      }
+    }
+  });
+
+  // update toggle-all button state
+  document.getElementById('fyToggleAll').textContent=fyHidden.size===3?'Mostrar todo':'Ocultar todo';
+
+  // Show AU RAM breakdown only when AU RAM metric is selected
+  const ramCard = document.getElementById('ramBreakdownCard');
+  const ramCCard = document.getElementById('ramCompCard');
+  const ramH2Card = document.getElementById('ramH2Card');
+  const invCard = document.getElementById('investmentCard');
+  const mainChartCard = document.getElementById('mainChartCard');
+
+  if(currentMetric === 'Investment') {
+    if(mainChartCard) mainChartCard.style.display = 'none';
+    ramCard.style.display = 'none';
+    if(ramCCard) ramCCard.style.display = 'none';
+    if(ramH2Card) ramH2Card.style.display = 'none';
+    document.getElementById('ramH2Inline').style.display = 'none';
+    if(invCard) { invCard.style.display = ''; renderInvestment(); }
+  } else if(currentMetric === 'SR%') {
+    if(invCard) invCard.style.display = 'none';
+    ramCard.style.display = 'none';
+    if(ramCCard) ramCCard.style.display = 'none';
+    if(ramH2Card) ramH2Card.style.display = 'none';
+    document.getElementById('ramH2Inline').style.display = 'none';
+    if(mainChartCard) mainChartCard.style.display = 'none';
+    const estCardX = document.getElementById('estCard');
+    if(estCardX) estCardX.style.display = 'none';
+  } else {
+    if(invCard) invCard.style.display = 'none';
+    if(mainChartCard) mainChartCard.style.display = '';
+    if(currentMetric === 'AU RAM') {
+      renderRAMChart();
+      if(ramCCard) { ramCCard.style.display = ''; renderRAMCompChart(); }
+      renderRAMH2Targets();
+      document.getElementById('ramH2Inline').style.display = '';
+      if(ramH2Card) ramH2Card.style.display = 'none';
+    } else {
+      ramCard.style.display = 'none';
+      if(ramCCard) ramCCard.style.display = 'none';
+      if(ramH2Card) ramH2Card.style.display = 'none';
+      document.getElementById('ramH2Inline').style.display = 'none';
+    }
+  }
+}
+
+// ── ESTIMATIONS TAB ──────────────────────────────────────────────────────────
+let estChart = null;
+
+function renderEstimationsTab() {
+  const cd = ESTIMATIONS_DATA[currentCountry] || ESTIMATIONS_DATA['ALL COUNTRIES'];
+  const sr = SR_DATA[currentCountry] || SR_DATA['ALL COUNTRIES'];
+  const months18 = ESTIMATIONS_MONTHS;
+
+  // Split into 2025 (indices 0-11) and 2026 (indices 12-17, skip last partial for chart)
+  const est25 = cd.est.slice(0,12);
+  const req25 = cd.req.slice(0,12);
+  const est26_full = cd.est.slice(12,17); // Jan-May 2026 (complete)
+  const req26_full = cd.req.slice(12,17);
+
+  // CR% per month (all 17 complete months, no partial Jun26)
+  const cr25 = est25.map((e,i) => e > 0 ? (req25[i]/e*100) : null);
+  const cr26 = est26_full.map((e,i) => e > 0 ? (req26_full[i]/e*100) : null);
+
+  // KPI strip
+  const estKpiStrip = document.getElementById('estKpiStrip');
+  if(estKpiStrip) {
+    const lastEstIdx = 16; // May 2026
+    const lastEst = cd.est[lastEstIdx];
+    const lastReq = cd.req[lastEstIdx];
+    const lastCR = lastEst > 0 ? lastReq/lastEst*100 : null;
+    // YoY vs May 2025 (index 4)
+    const yoyEst = cd.est[4] > 0 ? (lastEst-cd.est[4])/cd.est[4]*100 : null;
+    const yoyCR  = cr25[4] !== null ? (lastCR - cr25[4]) : null;
+    // SR% May 2026 vs May 2025
+    const lastSR26 = (sr && sr.a26 && sr.a26[4] !== null) ? sr.a26[4]*100 : null;
+    const lastSR25 = (sr && sr.a25 && sr.a25[4] !== null) ? sr.a25[4]*100 : null;
+    const yoySR = (lastSR26 !== null && lastSR25 !== null) ? (lastSR26 - lastSR25) : null;
+
+    const fmt = (v,d) => v >= 1e6 ? (v/1e6).toFixed(d)+'M' : v >= 1e3 ? (v/1e3).toFixed(d)+'K' : v.toFixed(d);
+    const yoyStr = (v, isBadge) => v === null ? '' :
+      `<span style="font-size:11px;font-weight:700;color:${v>=0?'#0C936B':'#E74A41'};margin-left:6px;">${v>=0?'▲':'▼'} ${Math.abs(v).toFixed(1)}${isBadge?'pp':'%'} YoY</span>`;
+
+    estKpiStrip.innerHTML = [
+      {label:'Estimaciones May 26', val: lastEst !== null ? fmt(lastEst,1) : '—', badge: yoyStr(yoyEst,false), color:'#7145D6'},
+      {label:'Requests May 26',     val: lastReq !== null ? fmt(lastReq,1) : '—', badge: '', color:'#0C936B'},
+      {label:'CR% May 26',          val: lastCR !== null ? lastCR.toFixed(1)+'%' : '—', badge: yoyStr(yoyCR,true), color:'#1F123F'},
+      {label:'SR% May 26',          val: lastSR26 !== null ? lastSR26.toFixed(1)+'%' : '—', badge: yoyStr(yoySR,true), color:'#EA8C2E'},
+    ].map(k => `
+      <div style="background:white;border-radius:12px;border:1px solid var(--gray-light);padding:14px 20px;min-width:170px;">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--gray-n60);">${k.label}</div>
+        <div style="font-size:28px;font-weight:800;color:${k.color};margin-top:4px;">${k.val}${k.badge}</div>
+      </div>
+    `).join('');
+  }
+
+  // Evolution chart
+  const MONTHS_2025 = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const MONTHS_2026 = ["Ene","Feb","Mar","Abr","May"];
+  const sc = 1e6;
+
+  // Pad 2026 to 12 points for alignment (null for Jun-Dic)
+  const est26_padded = [...est26_full.map(v=>v/sc), null,null,null,null,null,null,null];
+  const cr26_padded  = [...cr26, null,null,null,null,null,null,null];
+
+  const datasets = [
+    {type:'line', label:'Estimaciones 2025', data:est25.map(v=>v/sc),
+     borderColor:'#C3AFF2', borderWidth:2, pointRadius:3, pointBackgroundColor:'#C3AFF2',
+     tension:0.35, yAxisID:'yLeft', order:3},
+    {type:'line', label:'Estimaciones 2026', data:est26_padded,
+     borderColor:'#1F123F', borderWidth:2.5, pointRadius:4, pointBackgroundColor:'#1F123F',
+     tension:0.35, yAxisID:'yLeft', order:2},
+    {type:'line', label:'CR% 2025', data:cr25,
+     borderColor:'rgba(234,140,46,0.6)', borderWidth:1.5, pointRadius:2, borderDash:[4,3],
+     pointBackgroundColor:'rgba(234,140,46,0.6)', tension:0.35, yAxisID:'yRight', order:4},
+    {type:'line', label:'CR% 2026', data:cr26_padded,
+     borderColor:'#EA8C2E', borderWidth:2, pointRadius:3, borderDash:[4,3],
+     pointBackgroundColor:'#EA8C2E', tension:0.35, yAxisID:'yRight', order:1},
+  ];
+
+  const ctx = document.getElementById('estChart').getContext('2d');
+  if(estChart) estChart.destroy();
+  estChart = new Chart(ctx, {
+    data:{labels:MONTHS_2025, datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'rgba(31,18,63,0.92)', titleColor:'#EFE9FC', bodyColor:'#DDD2F8',
+          padding:12, cornerRadius:10,
+          callbacks:{
+            label(ctx){
+              const v=ctx.raw; if(v===null) return null;
+              if(ctx.dataset.label.startsWith('CR%')) return ` ${ctx.dataset.label}: ${v.toFixed(1)}%`;
+              return ` ${ctx.dataset.label}: ${v.toFixed(2)}M`;
+            }
+          }
+        }
+      },
+      scales:{
+        yLeft:{type:'linear',position:'left',
+          grid:{color:'rgba(0,0,0,0.04)'},
+          ticks:{color:'#717182',font:{size:11},callback:v=>typeof v==='number'?v.toFixed(1)+'M':''}},
+        yRight:{type:'linear',position:'right',
+          min:40, max:60,
+          grid:{drawOnChartArea:false},
+          ticks:{color:'#EA8C2E',font:{size:10},callback:v=>v.toFixed(0)+'%'}},
+        x:{grid:{display:false},ticks:{color:'#717182',font:{size:11}}},
+      }
+    }
+  });
+
+  // Funnel
+  const funnelBody = document.getElementById('estFunnelBody');
+  const funnelTitle = document.getElementById('estFunnelTitle');
+  if(!funnelBody) return;
+
+  // YTD Jan-May 2026 (indices 12-16) vs Jan-May 2025 (indices 0-4)
+  const sum = arr => arr.reduce((a,b) => a + (b||0), 0);
+  const avgSR = (srArr, n) => {
+    const vals = srArr.slice(0, n).filter(v => v !== null);
+    return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+  };
+  // YTD Jan-May only (indices 12-16 for 2026, 0-4 for 2025 — Jun excluded as partial)
+  const fEst26 = sum(cd.est.slice(12,17)),  fEst25 = sum(cd.est.slice(0,5));
+  const fReq26 = sum(cd.req.slice(12,17)),  fReq25 = sum(cd.req.slice(0,5));
+  const fCR26  = fEst26 > 0 ? fReq26/fEst26*100 : null;
+  const fCR25  = fEst25 > 0 ? fReq25/fEst25*100 : null;
+  const fSR26  = (sr && sr.a26) ? (avgSR(sr.a26, 5) !== null ? avgSR(sr.a26,5)*100 : null) : null;
+  const fSR25  = (sr && sr.a25) ? (avgSR(sr.a25, 5) !== null ? avgSR(sr.a25,5)*100 : null) : null;
+  // DOs: use actual DO B2C data (sum Jan-May), not estimated
+  const doData = ALL_DATA[currentCountry] && ALL_DATA[currentCountry]['DOs (DO B2C)'];
+  const fDOs26 = doData ? doData.a26.slice(0,5).filter(v=>v!==null).reduce((a,b)=>a+b,0) : null;
+  const fDOs25 = doData ? doData.a25.slice(0,5).reduce((a,b)=>a+b,0) : null;
+
+  // YoY helpers
+  const yoyPct  = (v26, v25) => (v26 !== null && v25 !== null && v25 > 0) ? (v26-v25)/v25*100 : null;
+  const yoyDelta = (v26, v25) => (v26 !== null && v25 !== null) ? v26-v25 : null;
+  const yoyBadge = (v, isPp) => {
+    if(v === null) return '';
+    const color = v >= 0 ? '#0C936B' : '#E74A41';
+    const sign  = v >= 0 ? '▲' : '▼';
+    const label = isPp ? v.toFixed(1)+'pp YoY' : v.toFixed(1)+'% YoY';
+    return `<span style="display:inline-block;margin-top:6px;font-size:11px;font-weight:700;color:${color};">${sign} ${Math.abs(isPp?v:v).toFixed(1)}${isPp?'pp':'%'} YoY</span>`;
+  };
+  const arrowDelta = (v, isPp) => {
+    if(v === null) return '';
+    const color = v >= 0 ? '#0C936B' : '#E74A41';
+    const sign  = v >= 0 ? '+' : '';
+    return `<div style="font-size:10px;font-weight:700;color:${color};margin-top:3px;">${sign}${v.toFixed(1)}${isPp?'pp':'%'} YoY</div>`;
+  };
+
+  const yoyEst  = yoyPct(fEst26, fEst25);
+  const yoyReq  = yoyPct(fReq26, fReq25);
+  const yoyCR   = yoyDelta(fCR26, fCR25);
+  const yoySR   = yoyDelta(fSR26, fSR25);
+  const yoyDOs  = yoyPct(fDOs26, fDOs25);
+
+  if(funnelTitle) funnelTitle.textContent = 'Funnel YTD · Ene–May 2026 vs Ene–May 2025' + (currentCountry !== 'ALL COUNTRIES' ? ' · ' + currentCountry : '');
+
+  const fmtBig = v => {
+    if(v === null) return '—';
+    if(v >= 1e6) return (v/1e6).toFixed(2)+'M';
+    if(v >= 1e3) return Math.round(v/1e3)+'K';
+    return Math.round(v).toString();
+  };
+
+  funnelBody.innerHTML = `
+    <div style="display:flex;align-items:stretch;justify-content:center;gap:0;flex-wrap:wrap;">
+      <!-- Step 1: Estimaciones -->
+      <div style="flex:1;min-width:160px;max-width:240px;background:var(--m10);border-radius:12px;padding:20px 16px;text-align:center;">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--m60);margin-bottom:6px;">Estimaciones</div>
+        <div style="font-size:30px;font-weight:800;color:var(--m60);">${fmtBig(fEst26)}</div>
+        <div style="font-size:11px;color:var(--gray-n60);margin-top:2px;">vs ${fmtBig(fEst25)} YTD'25</div>
+        ${yoyBadge(yoyEst, false)}
+        <div style="font-size:10px;color:var(--gray-n60);margin-top:6px;"></div>
+      </div>
+      <!-- Arrow 1 -->
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 6px;min-width:90px;text-align:center;">
+        <div style="font-size:10px;font-weight:700;color:#7145D6;letter-spacing:.6px;text-transform:uppercase;">CR%</div>
+        <div style="font-size:22px;font-weight:800;color:#7145D6;line-height:1.1;">${fCR26 !== null ? fCR26.toFixed(1)+'%' : '—'}</div>
+        <div style="font-size:10px;color:var(--gray-n60);">vs ${fCR25 !== null ? fCR25.toFixed(1)+'%' : '—'} YTD'25</div>
+        ${arrowDelta(yoyCR, true)}
+        <div style="font-size:22px;color:#C3AFF2;line-height:1;">→</div>
+      </div>
+      <!-- Step 2: Requests -->
+      <div style="flex:1;min-width:160px;max-width:240px;background:#EFF9F5;border-radius:12px;padding:20px 16px;text-align:center;">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#0C936B;margin-bottom:6px;">Requests</div>
+        <div style="font-size:30px;font-weight:800;color:#0C936B;">${fmtBig(fReq26)}</div>
+        <div style="font-size:11px;color:var(--gray-n60);margin-top:2px;">vs ${fmtBig(fReq25)} YTD'25</div>
+        ${yoyBadge(yoyReq, false)}
+      </div>
+      <!-- Arrow 2 -->
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 6px;min-width:90px;text-align:center;">
+        <div style="font-size:10px;font-weight:700;color:#1F123F;letter-spacing:.6px;text-transform:uppercase;">SR%</div>
+        <div style="font-size:22px;font-weight:800;color:#1F123F;line-height:1.1;">${fSR26 !== null ? fSR26.toFixed(1)+'%' : '—'}</div>
+        <div style="font-size:10px;color:var(--gray-n60);">vs ${fSR25 !== null ? fSR25.toFixed(1)+'%' : '—'} YTD'25</div>
+        ${arrowDelta(yoySR, true)}
+        <div style="font-size:22px;color:#C3AFF2;line-height:1;">→</div>
+      </div>
+      <!-- Step 3: DOs -->
+      <div style="flex:1;min-width:160px;max-width:240px;background:#FFF3E8;border-radius:12px;padding:20px 16px;text-align:center;">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#EA8C2E;margin-bottom:6px;">DOs (total)</div>
+        <div style="font-size:30px;font-weight:800;color:#EA8C2E;">${fmtBig(fDOs26)}</div>
+        <div style="font-size:11px;color:var(--gray-n60);margin-top:2px;">vs ${fmtBig(fDOs25)} YTD'25</div>
+        ${yoyBadge(yoyDOs, false)}
+      </div>
+    </div>
+  `;
+
+  // SR% embedded in Funnel tab
+  renderSRChart();
+}
+
+// ── COUNTRY TABS ─────────────────────────────────────────────────────────────
+const COUNTRIES=['ALL COUNTRIES','AR','ES','CO','CL','PE','UY'];
+const tabsEl=document.getElementById('countryTabs');
+COUNTRIES.forEach(c=>{
+  const t=document.createElement('div');
+  t.className='country-tab'+(c===currentCountry?' active':'');
+  t.textContent=c;
+  t.addEventListener('click',()=>{
+    document.querySelectorAll('.country-tab').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active'); currentCountry=c; render();
+  });
+  tabsEl.appendChild(t);
+});
+
+// ── METRIC PILLS ─────────────────────────────────────────────────────────────
+const pillsEl=document.getElementById('metricPills');
+Object.keys(METRICS_CFG).forEach(name=>{
+  const btn=document.createElement('button');
+  btn.className='metric-pill'+(name===currentMetric?' active':'');
+  btn.textContent=name;
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.metric-pill').forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active'); currentMetric=name; render();
+  });
+  pillsEl.appendChild(btn);
+});
+
+// ── LEGEND TOGGLE ─────────────────────────────────────────────────────────────
+document.getElementById('chartLegend').addEventListener('click',e=>{
+  const item=e.target.closest('[data-label]');
+  if(!item||!chart) return;
+  const idx=chart.data.datasets.findIndex(d=>d.label===item.dataset.label);
+  if(idx===-1) return;
+  chart._hidden[idx] = !chart._hidden[idx];
+  item.classList.toggle('hidden', chart._hidden[idx]);
+  chart.update();
+});
+
+
+// ── AU RAM BREAKDOWN ─────────────────────────────────────────────────────────
+let ramChart = null;
+const MONTHS5 = ['Ene','Feb','Mar','Abr','May'];
+const ramHidden = new Set();
+
+function fmtK(v) {
+  if (v === null || v === undefined) return '—';
+  const abs = Math.abs(v);
+  if (abs >= 1e6) return (v/1e6).toFixed(1)+'M';
+  if (abs >= 1e3) return Math.round(v/1e3)+'K';
+  return Math.round(v).toString();
+}
+
+function renderRAMKPIs(rd) {
+  const m = ['Ene','Feb','Mar','Abr','May'];
+  let html = '';
+  for (let i = 0; i < 5; i++) {
+    const ram25 = rd.a25_ram[i], ram26 = rd.a26_ram[i];
+    const new25 = rd.a25_new[i], new26 = rd.a26_new[i];
+    const react25 = rd.a25_react[i], react26 = rd.a26_react[i];
+    const churn25 = rd.a25_churn[i], churn26 = rd.a26_churn[i];
+    const ramYoY = (ram25 && ram26) ? ((ram26-ram25)/Math.abs(ram25)*100) : null;
+    const newYoY = (new25 && new26) ? ((new26-new25)/Math.abs(new25)*100) : null;
+    const reactYoY = (react25 && react26) ? ((react26-react25)/Math.abs(react25)*100) : null;
+    const churnYoY = (churn25 && churn26) ? ((Math.abs(churn26)-Math.abs(churn25))/Math.abs(churn25)*100) : null;
+    const chRate25 = (ram25 && churn25) ? (Math.abs(churn25)/ram25*100) : null;
+    const chRate26 = (ram26 && churn26) ? (Math.abs(churn26)/ram26*100) : null;
+    const badge = (v, down=false) => {
+      if (v===null) return '';
+      const up = down ? v<=0 : v>=0;
+      return `<span class="kpi-badge ${up?'up':'down'}" style="font-size:9px;padding:1px 5px;">${v>=0?'+':''}${v.toFixed(1)}%</span>`;
+    };
+    html += `<div style="background:var(--m0);border-radius:10px;padding:10px 14px;border:1px solid var(--m10);">
+      <div style="font-size:10px;font-weight:700;color:var(--gray-n60);letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px;">${m[i]}</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <div><div style="font-size:9px;color:var(--gray-n60);">AU RAM</div>
+          <div style="font-size:13px;font-weight:800;color:var(--m80);">${fmtK(ram26)}</div>
+          ${badge(ramYoY)} <span style="font-size:9px;color:var(--gray-n60);">YoY</span></div>
+        <div><div style="font-size:9px;color:var(--gray-n60);">New</div>
+          <div style="font-size:12px;font-weight:700;color:#0C936B;">${fmtK(new26)}</div>
+          ${badge(newYoY)}</div>
+        <div><div style="font-size:9px;color:var(--gray-n60);">React.</div>
+          <div style="font-size:12px;font-weight:700;color:var(--m60);">${fmtK(react26)}</div>
+          ${badge(reactYoY)}</div>
+        <div><div style="font-size:9px;color:var(--gray-n60);">Tasa churn</div>
+          <div style="font-size:12px;font-weight:700;color:var(--red);">${chRate26!==null?chRate26.toFixed(1)+'%':'—'}</div>
+          ${(chRate26!==null&&chRate25!==null)?`<span class="kpi-badge ${chRate26<=chRate25?'up':'down'}" style="font-size:9px;padding:1px 5px;">${chRate26>=chRate25?'+':''}${(chRate26-chRate25).toFixed(2)}pp</span>`:''}</div>
+      </div>
+    </div>`;
+  }
+  document.getElementById('ramKpis').innerHTML = html;
+}
+
+function renderRAMChart() {
+  const rd = AU_RAM_DATA[currentCountry];
+  if (!rd) return;
+
+  // 4 month labels — each has 2 stacked bars (y25 left, y26 right)
+  const labels = MONTHS5;
+  const sc25 = arr => arr.slice(0,5).map(v=>v!==null?v/1e3:null);
+  const sc26 = arr => arr.slice(0,5).map(v=>v!==null?v/1e3:null);
+
+  const datasets = [
+    // --- Recurrent ---
+    {label:'Recurrent 25', stack:'y25', data:sc25(rd.a25_recur),
+     backgroundColor:'rgba(195,175,242,0.85)', hidden: ramHidden.has('recur')},
+    {label:'Recurrent 26', stack:'y26', data:sc26(rd.a26_recur),
+     backgroundColor:'rgba(113,69,214,0.80)', hidden: ramHidden.has('recur')},
+    // --- Reactivated ---
+    {label:'Reactivated 25', stack:'y25', data:sc25(rd.a25_react),
+     backgroundColor:'rgba(195,175,242,0.5)', hidden: ramHidden.has('react')},
+    {label:'Reactivated 26', stack:'y26', data:sc26(rd.a26_react),
+     backgroundColor:'rgba(113,69,214,0.45)', hidden: ramHidden.has('react')},
+    // --- New ---
+    {label:'New 25', stack:'y25', data:sc25(rd.a25_new),
+     backgroundColor:'rgba(12,147,107,0.4)', hidden: ramHidden.has('new')},
+    {label:'New 26', stack:'y26', data:sc26(rd.a26_new),
+     backgroundColor:'rgba(12,147,107,0.9)', hidden: ramHidden.has('new')},
+    // --- Churn (negative) ---
+    {label:'Churn 25', stack:'y25', data:sc25(rd.a25_churn).map(v=>v!==null?v:null),
+     backgroundColor:'rgba(231,74,65,0.3)', hidden: ramHidden.has('churn')},
+    {label:'Churn 26', stack:'y26', data:sc26(rd.a26_churn),
+     backgroundColor:'rgba(231,74,65,0.8)', hidden: ramHidden.has('churn')},
+  ];
+
+  const ctx = document.getElementById('ramChart').getContext('2d');
+  if (ramChart) ramChart.destroy();
+  ramChart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      layout:{padding:{top:30}},
+      interaction: { mode:'index', intersect:false },
+      plugins: {
+        legend: { display:false },
+        tooltip: {
+          backgroundColor:'rgba(31,18,63,0.92)', titleColor:'#EFE9FC', bodyColor:'#DDD2F8',
+          padding:10, cornerRadius:8,
+          callbacks: {
+            label(ctx) {
+              const v = ctx.raw; if(v===null) return null;
+              return ` ${ctx.dataset.label}: ${v>=0?'':''}${v.toFixed(1)}K`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid:{display:false}, ticks:{color:'#717182',font:{size:10}} },
+        y: { grid:{color:'rgba(0,0,0,0.04)'}, ticks:{color:'#717182',font:{size:10},
+             callback: v => Math.abs(v) >= 1000 ? (v/1000).toFixed(1)+'M' : Math.round(v)+'K'} }
+      }
+    },
+    plugins:[{
+      id:'ramLabels',
+      afterDraw(chart){
+        const ctx = chart.ctx;
+        const n = chart.data.labels.length;
+        for(let i=0; i<n; i++){
+          ['y25','y26'].forEach(stackId=>{
+            const sds = chart.data.datasets.map((ds,di)=>({ds,di}))
+              .filter(({ds})=>ds.stack===stackId && !ds.hidden);
+            if(!sds.length) return;
+            const meta0 = chart.getDatasetMeta(sds[0].di);
+            if(!meta0.data[i]) return;
+            const x = meta0.data[i].x;
+            // sum positive values
+            const total = sds.reduce((s,{ds})=>{const v=ds.data[i]; return s+(v!==null&&v>0?v:0);},0);
+            if(!total) return;
+            // top y (min y = highest point on canvas)
+            let topY = Infinity;
+            sds.forEach(({di})=>{ const m=chart.getDatasetMeta(di); if(m.data[i]) topY=Math.min(topY,m.data[i].y); });
+            if(topY===Infinity) return;
+            const lbl = total>=1000?(total/1000).toFixed(1)+'M':Math.round(total)+'K';
+            ctx.save();
+            ctx.textAlign='center';
+            if(stackId==='y26'){
+              // compute YoY vs y25
+              const sds25=chart.data.datasets.map((ds,di)=>({ds,di})).filter(({ds})=>ds.stack==='y25'&&!ds.hidden);
+              const t25=sds25.reduce((s,{ds})=>{const v=ds.data[i];return s+(v!==null&&v>0?v:0);},0);
+              const yoy=t25?((total-t25)/t25*100):null;
+              ctx.font='700 10px Montserrat,sans-serif';
+              ctx.fillStyle='#1F123F';
+              ctx.fillText(lbl, x, topY-20);
+              if(yoy!==null){
+                ctx.font='700 9px Montserrat,sans-serif';
+                ctx.fillStyle=yoy>=0?'#0C936B':'#E74A41';
+                ctx.fillText((yoy>=0?'+':'')+yoy.toFixed(1)+'%', x, topY-9);
+              }
+            } else {
+              ctx.font='600 9px Montserrat,sans-serif';
+              ctx.fillStyle='#aaaaaa';
+              ctx.fillText(lbl, x, topY-6);
+            }
+            ctx.restore();
+          });
+        }
+      }
+    }]
+  });
+}
+
+// Legend toggle for RAM chart
+document.getElementById('ramLegend').addEventListener('click', e => {
+  const item = e.target.closest('[data-rl]');
+  if (!item) return;
+  const key = item.dataset.rl;
+  if (ramHidden.has(key)) ramHidden.delete(key); else ramHidden.add(key);
+  item.classList.toggle('hidden', ramHidden.has(key));
+  renderRAMChart();
+});
+
+// ── RAM H2 TARGETS ───────────────────────────────────────────────────────────
+function renderRAMH2Targets() {
+  const cd = RAM_COMP_DATA[currentCountry];
+  const rd = AU_RAM_DATA[currentCountry];
+  if (!cd || !rd) return;
+
+  const comps = [
+    { key:'New',        label:'New',         color:'#0C936B', neg:false },
+    { key:'Reactivated',label:'Reactivated', color:'#7145D6', neg:false },
+    { key:'Recurrent',  label:'Recurrent',   color:'#C3AFF2', neg:false },
+    { key:'Churn',      label:'Churn (tasa)',color:'#E74A41', neg:true  },
+  ];
+
+  const inlineEl = document.getElementById('ramH2Inline');
+  if (inlineEl) {
+    inlineEl.innerHTML = '<div style="font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--gray-n60);margin-bottom:8px;">Componentes RAM · H1 actual vs Objetivo H2</div><div id="ramH2StripInner" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>';
+  }
+  const targetEl = inlineEl ? document.getElementById('ramH2StripInner') : document.getElementById('ramH2Strip');
+
+  const tgtData = RAM_H2_YOY_TGT[currentCountry] || RAM_H2_YOY_TGT['ALL COUNTRIES'];
+
+  targetEl.innerHTML = comps.map(c => {
+    const md = cd[c.key];
+    if (!md) return '';
+
+    if (c.neg) {
+      // Churn: main = H1 actual tasa, small = H2 tasa objetivo
+      const ytdChurn = rd.a26_churn.filter(v => v !== null);
+      const ytdRamBase = rd.a26_ram.slice(0, ytdChurn.length);
+      const h1Rate = ytdChurn.length
+        ? ytdChurn.reduce((s,v,i) => s + (ytdRamBase[i] ? Math.abs(v)/ytdRamBase[i] : 0), 0) / ytdChurn.length * 100
+        : null;
+      const h2TgtRate = tgtData ? tgtData.Churn : null;
+
+      return `<div style="background:white;border-radius:11px;padding:12px 14px;border:1px solid var(--m10);border-top:3px solid ${c.color};">
+        <div style="font-size:9px;color:var(--gray-n60);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">${c.label}</div>
+        <div style="font-size:23px;font-weight:800;color:${c.color};">${h1Rate !== null ? h1Rate.toFixed(1)+'%' : '—'}</div>
+        <div style="font-size:9px;color:var(--gray-n60);margin-bottom:4px;">Tasa H1 actual</div>
+        ${h2TgtRate !== null ? `<div style="font-size:10px;color:var(--gray-n60);margin-top:6px;padding-top:5px;border-top:1px solid var(--m10);">Tgt H2: <span style="font-weight:700;color:${c.color};">${h2TgtRate.toFixed(1)}%</span></div>` : ''}
+      </div>`;
+    } else {
+      // New / Reactivated / Recurrent: main = H1 actual % YoY, small = H2 target % YoY
+      const a26h1 = md.a26.slice(0,6).filter(v => v !== null);
+      const n = a26h1.length;
+      const a25h1 = md.a25.slice(0, n);
+      let h1YoY = null;
+      if (n > 0) {
+        const avg26 = a26h1.reduce((a,b)=>a+b,0)/n;
+        const avg25 = a25h1.filter(v=>v!==null).reduce((a,b)=>a+b,0) / a25h1.filter(v=>v!==null).length;
+        h1YoY = avg25 ? (avg26-avg25)/Math.abs(avg25)*100 : null;
+      }
+      const h2Tgt = tgtData ? tgtData[c.key] : null;
+      const h1Color = h1YoY !== null ? (h1YoY >= 0 ? 'var(--green)' : 'var(--red)') : c.color;
+      const h2Color = h2Tgt !== null ? (h2Tgt >= 0 ? 'var(--green)' : 'var(--red)') : 'var(--gray-n60)';
+
+      return `<div style="background:white;border-radius:11px;padding:12px 14px;border:1px solid var(--m10);border-top:3px solid ${c.color};">
+        <div style="font-size:9px;color:var(--gray-n60);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">${c.label}</div>
+        <div style="font-size:23px;font-weight:800;color:${h1Color};">${h1YoY !== null ? (h1YoY>=0?'+':'')+h1YoY.toFixed(1)+'%' : '—'}</div>
+        <div style="font-size:9px;color:var(--gray-n60);margin-bottom:4px;">Media mensual H1 · YoY</div>
+        ${h2Tgt !== null ? `<div style="font-size:10px;color:var(--gray-n60);margin-top:6px;padding-top:5px;border-top:1px solid var(--m10);">Tgt H2: <span style="font-weight:700;color:${h2Color};">${h2Tgt>=0?'+':''}${h2Tgt.toFixed(1)}%</span></div>` : ''}
+      </div>`;
+    }
+  }).join('');
+}
+
+// ── PER-COUNTRY INSIGHTS ──────────────────────────────────────────────────────
+
+
+
+// ── RAM COMPONENT CHART ───────────────────────────────────────────────────────
+let ramCompChart = null;
+let currentRamComp = 'New';
+const MONTHS_FULL = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+function fmtCompVal(v, metric) {
+  if (v === null || v === undefined) return '—';
+  const abs = Math.abs(v);
+  if (abs >= 1e6) return (v/1e6).toFixed(2)+'M';
+  if (abs >= 1e3) return (v/1e3).toFixed(1)+'K';
+  return Math.round(v).toString();
+}
+
+function renderRAMCompChart() {
+  const cd = RAM_COMP_DATA[currentCountry];
+  if (!cd) return;
+  const md = cd[currentRamComp];
+  if (!md) return;
+
+  const isChurn = currentRamComp === 'Churn';
+  const churnH2TgtRate = isChurn ? (CHURN_H2_TGT_RATE[currentCountry] || null) : null;
+  const churnH2Seasonal = isChurn ? (CHURN_H2_SEASONAL[currentCountry] || null) : null;
+
+  document.getElementById('ramCompTitle').textContent =
+    currentRamComp + (isChurn ? ' (tasa %)' : '') + ' · Evolución mensual';
+  const rd4rate = AU_RAM_DATA[currentCountry];
+
+  function toRate(arr, base) {
+    return arr.map((v,i) => {
+      if (v===null) return null;
+      const b = base ? base[i] : null;
+      return b ? Math.abs(v)/b*100 : null;
+    });
+  }
+  function toK(arr) { return arr.map(v => v!==null ? v/1e3 : null); }
+
+  const ds25   = isChurn ? toRate(md.a25, rd4rate ? rd4rate.a25_ram : null)
+                         : toK(md.a25);
+  const ds26   = isChurn ? toRate(md.a26, rd4rate ? rd4rate.a26_ram : null)
+                         : toK(md.a26);
+  const dsTgt  = isChurn ? toRate(md.tgt, rd4rate ? rd4rate.a26_ram : null)
+                         : toK(md.tgt);
+  const dsMod  = isChurn ? toRate(md.model, rd4rate ? rd4rate.a26_ram : null)
+                         : toK(md.model);
+
+  const rch = typeof ramCompHidden !== 'undefined' ? ramCompHidden : new Set();
+  const datasets = [
+    {label:'2025',   data:rch.has('a25')?ds25.map(()=>null):ds25,  borderColor:'#C3AFF2', borderWidth:2, pointRadius:3,
+     pointBackgroundColor:'#C3AFF2', tension:0.35, fill:false},
+    {label:'2026',   data:rch.has('a26')?ds26.map(()=>null):ds26,  borderColor:'#1F123F', borderWidth:2.5, pointRadius:4,
+     pointBackgroundColor:'#1F123F', tension:0.35, fill:false},
+  ].map(d => ({...d, backgroundColor:'transparent', spanGaps:false}));
+
+  const isNeg = currentRamComp === 'Churn';
+  const ctx = document.getElementById('ramCompChart').getContext('2d');
+  if (ramCompChart) ramCompChart.destroy();
+  ramCompChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels: MONTHS_FULL, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode:'index', intersect:false },
+      plugins: {
+        legend: { display:false },
+        tooltip: {
+          backgroundColor:'rgba(31,18,63,0.92)', titleColor:'#EFE9FC', bodyColor:'#DDD2F8',
+          padding:10, cornerRadius:8,
+          callbacks: {
+            label(ctx) {
+              const v = ctx.raw;
+              if (v === null) return null;
+              const fmt = isChurn
+                ? v.toFixed(2)+'%'
+                : (Math.abs(v) >= 1000 ? (v/1000).toFixed(1)+'M' : v.toFixed(1)+'K');
+              return ` ${ctx.dataset.label}: ${fmt}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid:{display:false}, ticks:{color:'#717182',font:{size:11}} },
+        y: { grid:{color:'rgba(0,0,0,0.04)'},
+             ticks:{color:'#717182',font:{size:10},
+               callback: v => isChurn
+                 ? (v!==0?v.toFixed(1)+'%':'0%')
+                 : (Math.abs(v)>=1000?(v/1000).toFixed(1)+'M':Math.round(v)+'K')} }
+      }
+    }
+  });
+}
+
+// Pill clicks for component selector
+document.getElementById('ramCompPills').addEventListener('click', e => {
+  const btn = e.target.closest('[data-comp]');
+  if (!btn) return;
+  document.querySelectorAll('#ramCompPills .metric-pill').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentRamComp = btn.dataset.comp;
+  renderRAMCompChart();
+});
+
+// Scenario legend toggle for component chart
+const ramCompHidden = new Set();
+document.getElementById('ramCompLegend').addEventListener('click', e => {
+  const item = e.target.closest('[data-rscen]');
+  if (!item) return;
+  const k = item.dataset.rscen;
+  if (ramCompHidden.has(k)) ramCompHidden.delete(k); else ramCompHidden.add(k);
+  item.classList.toggle('hidden', ramCompHidden.has(k));
+  renderRAMCompChart();
+});
+
+// Collapse/expand component chart
+let ramCompCollapsed = false;
+function toggleFyBlock() {
+  const body = document.getElementById('fyBody');
+  const btn  = document.getElementById('fyToggleBlock');
+  const hidden = body.style.display === 'none';
+  body.style.display = hidden ? '' : 'none';
+  btn.textContent = hidden ? 'Ocultar bloque' : 'Mostrar bloque';
+}
+function toggleRamH2() {
+  const body = document.getElementById('ramH2Body');
+  const btn  = document.getElementById('ramH2Toggle');
+  const hidden = body.style.display === 'none';
+  body.style.display = hidden ? '' : 'none';
+  btn.textContent = hidden ? 'Ocultar' : 'Mostrar';
+}
+function toggleRamBreakdown() {
+  const card = document.getElementById('ramBreakdownCard');
+  const btn  = document.getElementById('ramBreakdownToggle');
+  const area = card.querySelector('.chart-area');
+  const note = card.querySelector('.note');
+  const hidden = area.style.display === 'none';
+  area.style.display = hidden ? '' : 'none';
+  if (note) note.style.display = hidden ? '' : 'none';
+  btn.textContent = hidden ? 'Ocultar' : 'Mostrar';
+}
+function toggleRamComp() {
+  ramCompCollapsed = !ramCompCollapsed;
+  const area = document.querySelector('#ramCompCard .chart-area');
+  const note = document.querySelector('#ramCompCard .note');
+  const btn  = document.getElementById('ramCompToggle');
+  if (area) area.style.display = ramCompCollapsed ? 'none' : '';
+  if (note) note.style.display = ramCompCollapsed ? 'none' : '';
+  if (btn)  btn.textContent = ramCompCollapsed ? 'Mostrar' : 'Ocultar';
+}
+
+function toggleReadme() {
+  const panel = document.getElementById('readmePanel');
+  const main  = document.getElementById('mainContent');
+  const tab   = document.getElementById('readmeTab');
+  const isOpen = panel.classList.contains('visible');
+  panel.classList.toggle('visible', !isOpen);
+  main.style.display = isOpen ? '' : 'none';
+  tab.classList.toggle('active', !isOpen);
+}
+
+
+// ── SR% RENDER ──────────────────────────────// ── SR% RENDER ────────────────────────────────────────────────────────────
+let srChartInstance = null;
+function renderSRChart() {
+  const countryKey = currentCountry;
+  const d = SR_DATA[countryKey] || SR_DATA['ALL COUNTRIES'];
+  const ds25 = (d.a25 || []).map(v => v !== null ? +(v * 100).toFixed(2) : null);
+  const ds26 = (d.a26 || []).map(v => v !== null ? +(v * 100).toFixed(2) : null);
+
+  const avg = arr => { const f = arr.filter(v=>v!==null); return f.length ? f.reduce((a,b)=>a+b,0)/f.length : null; };
+  const avgH1_25 = avg(ds25.slice(0,6));
+  const avgH2_25 = avg(ds25.slice(6));
+  const avgH1_26 = avg(ds26.slice(0,6));
+
+  const lastIdx = ds26.reduce((acc,v,i) => v!==null ? i : acc, -1);
+  const mNames = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const lastM = lastIdx >= 0 ? mNames[lastIdx] : 'May';
+
+  const fmtV = v => v !== null ? v.toFixed(1)+'%' : '—';
+  const diffBadge = (a, b) => {
+    if(a===null||b===null) return '';
+    const dd = a-b; const sign = dd>=0?'+':''; const col = dd>=0?'var(--green)':'var(--red)';
+    return '<span style="font-size:11px;font-weight:700;color:'+col+';margin-left:6px;">'+sign+dd.toFixed(1)+' pp YoY</span>';
+  };
+
+  const strip = document.getElementById('srKpiStrip');
+  if(strip) strip.innerHTML =
+    '<div class="kpi-card" style="flex:1;min-width:180px;border-top-color:var(--m60);">' +
+      '<div class="kpi-label">H1 2026 (YTD)</div>' +
+      '<div class="kpi-value" style="font-size:26px;">'+fmtV(avgH1_26)+diffBadge(avgH1_26, avgH1_25)+'</div>' +
+      '<div class="kpi-sub">Media Ene–'+lastM+' 2026</div>' +
+    '</div>' +
+    '<div class="kpi-card green" style="flex:1;min-width:180px;">' +
+      '<div class="kpi-label">H1 2025</div>' +
+      '<div class="kpi-value" style="font-size:26px;">'+fmtV(avgH1_25)+'</div>' +
+      '<div class="kpi-sub">Media Ene–Jun 2025</div>' +
+    '</div>';
+
+  const canvas = document.getElementById('srChart');
+  if(!canvas) return;
+  const ctx2d = canvas.getContext('2d');
+  if(srChartInstance) { srChartInstance.destroy(); srChartInstance = null; }
+  srChartInstance = new Chart(ctx2d, {
+    data: { labels: MONTHS, datasets: [
+      {type:'line', label:'2025', data:ds25, borderColor:'#C3AFF2', borderWidth:2, pointRadius:3, pointBackgroundColor:'#C3AFF2', tension:0.3},
+      {type:'line', label:'2026', data:ds26, borderColor:'#1F123F', borderWidth:2.5, pointRadius:4, pointBackgroundColor:'#1F123F', tension:0.3},
+    ]},
+    options: {
+      plugins:{
+        tooltip:{
+          callbacks:{
+            label: function(ctx) {
+              var v=ctx.raw; if(v===null) return null;
+              var i=ctx.dataIndex;
+              var other = ctx.dataset.label==='2026' ? ds25[i] : ds26[i];
+              var s = ' '+ctx.dataset.label+': '+v.toFixed(1)+'%';
+              if(ctx.dataset.label==='2026' && other!=null){
+                var diff=v-other; s+='   ·   '+(diff>=0?'+':'')+diff.toFixed(1)+' pp YoY';
+              }
+              return s;
+            }
+          }
+        }
+      },
+      scales:{
+        yLeft:{grid:{color:'rgba(0,0,0,0.04)'}, ticks:{callback: function(v){return v.toFixed(0)+'%';}}},
+      }
+    }
+  });
+}
+
+// ── INVESTMENT RENDER ─────────────────────────────────────────────────────
+function fmtEur(v) {
+  if (v === null || v === undefined) return '—';
+  const abs = Math.abs(v);
+  if (abs >= 1e6) return (v/1e6).toFixed(2) + 'M€';
+  if (abs >= 1e3) return Math.round(v/1e3) + 'K€';
+  return Math.round(v) + '€';
+}
+function fmtPctInv(v) { return (v*100).toFixed(1)+'%'; }
+
+function renderInvestment() {
+  const key = currentCountry;
+  const d = INVESTMENT_DATA[key];
+  const wrap = document.getElementById('invTableWrap');
+  if (!d) { wrap.innerHTML = '<p style="color:var(--gray-n60);padding:12px;">Sin datos para '+key+'</p>'; return; }
+
+  const MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const fmtK = v => {
+    if(!v && v!==0) return '—';
+    if(Math.abs(v)>=1e6) return (v/1e6).toFixed(2)+'M';
+    if(Math.abs(v)>=1e3) return Math.round(v/1e3)+'K';
+    return Math.round(v).toString();
+  };
+  const pct = (part, total) => total > 0 ? (part/total*100).toFixed(0)+'%' : '—';
+  const yoyBadge = (v26, v25) => {
+    if(!v25 || v25===0) return '';
+    const pp = (v26-v25)/v25*100;
+    const col = pp<=0 ? '#0C936B' : '#E74A41';
+    return `<span style="font-size:10px;font-weight:700;color:${col};margin-left:4px;">${pp>=0?'+':''}${pp.toFixed(1)}%</span>`;
+  };
+
+  const months26 = d.a26.map((m,i) => m !== null ? i : -1).filter(i => i>=0);
+  const nMonths = months26.length;
+
+  // ── TABLE: 2026 Actuals ──
+  let t = `<div style="font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--gray-n60);margin-bottom:8px;">
+    Actuals 2026 · Inversión Rider · por mes (USD)</div>`;
+
+  t += `<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:24px;">
+  <thead><tr style="border-bottom:2px solid var(--m60);">
+    <th style="text-align:left;padding:7px 8px;color:var(--gray-n60);font-weight:600;">Mes</th>
+    <th style="text-align:right;padding:7px 8px;color:var(--gray-n60);font-weight:600;">Total</th>
+    <th style="text-align:right;padding:7px 8px;color:var(--gray-n60);font-weight:600;">YoY</th>
+    <th style="text-align:right;padding:7px 8px;color:#7145D6;font-weight:600;">Brand</th>
+    <th style="text-align:right;padding:7px 8px;color:#0C936B;font-weight:600;">Acquisition</th>
+    <th style="text-align:right;padding:7px 8px;color:#5555AA;font-weight:600;">Engagement</th>
+    <th style="text-align:right;padding:7px 8px;color:#aaa;font-style:italic;font-weight:600;border-left:2px dashed #ddd;">Desc.</th>
+  </tr></thead><tbody>`;
+
+  let ytd26 = {inv:0,brand:0,acq:0,eng:0,disc:0};
+  let ytd25 = {inv:0,brand:0,acq:0,eng:0,disc:0};
+
+  for(let i=0; i<nMonths; i++) {
+    const m26 = d.a26[i]; const m25 = d.a25[i];
+    const bg = i%2===0 ? '' : 'background:#FAF8FE;';
+    ytd26.inv+=m26.inv; ytd26.brand+=m26.brand; ytd26.acq+=m26.acq; ytd26.eng+=m26.eng; ytd26.disc+=m26.disc;
+    ytd25.inv+=m25.inv; ytd25.brand+=m25.brand; ytd25.acq+=m25.acq; ytd25.eng+=m25.eng; ytd25.disc+=m25.disc;
+    t += `<tr style="${bg}">
+      <td style="padding:6px 8px;font-weight:600;">${MONTH_NAMES[i]}</td>
+      <td style="text-align:right;padding:6px 8px;font-weight:700;">${fmtK(m26.inv)}</td>
+      <td style="text-align:right;padding:6px 8px;">${yoyBadge(m26.inv, m25.inv)}</td>
+      <td style="text-align:right;padding:6px 8px;">${fmtK(m26.brand)} <span style="font-size:10px;color:#7145D6;">(${pct(m26.brand,m26.inv)})</span></td>
+      <td style="text-align:right;padding:6px 8px;">${fmtK(m26.acq)} <span style="font-size:10px;color:#0C936B;">(${pct(m26.acq,m26.inv)})</span></td>
+      <td style="text-align:right;padding:6px 8px;">${fmtK(m26.eng)} <span style="font-size:10px;color:#5555AA;">(${pct(m26.eng,m26.inv)})</span></td>
+      <td style="text-align:right;padding:6px 8px;color:#aaa;font-style:italic;border-left:2px dashed #ddd;">${fmtK(m26.disc)}</td>
+    </tr>`;
+  }
+  t += `<tr style="border-top:2px solid var(--m60);background:var(--m10);">
+    <td style="padding:7px 8px;font-weight:700;">YTD</td>
+    <td style="text-align:right;padding:7px 8px;font-weight:800;color:var(--m60);">${fmtK(ytd26.inv)}</td>
+    <td style="text-align:right;padding:7px 8px;font-weight:800;">${yoyBadge(ytd26.inv, ytd25.inv)}</td>
+    <td style="text-align:right;padding:7px 8px;font-weight:700;">${fmtK(ytd26.brand)} <span style="font-size:10px;color:#7145D6;">(${pct(ytd26.brand,ytd26.inv)})</span></td>
+    <td style="text-align:right;padding:7px 8px;font-weight:700;">${fmtK(ytd26.acq)} <span style="font-size:10px;color:#0C936B;">(${pct(ytd26.acq,ytd26.inv)})</span></td>
+    <td style="text-align:right;padding:7px 8px;font-weight:700;">${fmtK(ytd26.eng)} <span style="font-size:10px;color:#5555AA;">(${pct(ytd26.eng,ytd26.inv)})</span></td>
+    <td style="text-align:right;padding:7px 8px;font-weight:700;color:#aaa;font-style:italic;border-left:2px dashed #ddd;">${fmtK(ytd26.disc)}</td>
+  </tr>`;
+  t += '</tbody></table>';
+
+  // ── TABLE 2025 ──
+  t += `<div style="font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--gray-n60);margin:24px 0 8px;">
+    Actuals 2025 · Inversión Rider · por mes (USD)</div>`;
+
+  t += `<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:24px;">
+  <thead><tr style="border-bottom:2px solid #C3AFF2;">
+    <th style="text-align:left;padding:7px 8px;color:var(--gray-n60);font-weight:600;">Mes</th>
+    <th style="text-align:right;padding:7px 8px;color:var(--gray-n60);font-weight:600;">Total</th>
+    <th style="text-align:right;padding:7px 8px;color:#7145D6;font-weight:600;">Brand</th>
+    <th style="text-align:right;padding:7px 8px;color:#0C936B;font-weight:600;">Acquisition</th>
+    <th style="text-align:right;padding:7px 8px;color:#5555AA;font-weight:600;">Engagement</th>
+    <th style="text-align:right;padding:7px 8px;color:#aaa;font-style:italic;font-weight:600;border-left:2px dashed #ddd;">Desc.</th>
+  </tr></thead><tbody>`;
+
+  let ytd25full = {inv:0,brand:0,acq:0,eng:0,disc:0};
+  for(let i=0; i<12; i++) {
+    const m25 = d.a25[i];
+    if(!m25) continue;
+    const bg = i%2===0 ? '' : 'background:#FAF8FE;';
+    ytd25full.inv+=m25.inv; ytd25full.brand+=m25.brand; ytd25full.acq+=m25.acq; ytd25full.eng+=m25.eng; ytd25full.disc+=m25.disc;
+    t += `<tr style="${bg}">
+      <td style="padding:6px 8px;font-weight:600;">${MONTH_NAMES[i]}</td>
+      <td style="text-align:right;padding:6px 8px;font-weight:700;">${fmtK(m25.inv)}</td>
+      <td style="text-align:right;padding:6px 8px;">${fmtK(m25.brand)} <span style="font-size:10px;color:#7145D6;">(${pct(m25.brand,m25.inv)})</span></td>
+      <td style="text-align:right;padding:6px 8px;">${fmtK(m25.acq)} <span style="font-size:10px;color:#0C936B;">(${pct(m25.acq,m25.inv)})</span></td>
+      <td style="text-align:right;padding:6px 8px;">${fmtK(m25.eng)} <span style="font-size:10px;color:#5555AA;">(${pct(m25.eng,m25.inv)})</span></td>
+      <td style="text-align:right;padding:6px 8px;color:#aaa;font-style:italic;border-left:2px dashed #ddd;">${fmtK(m25.disc)}</td>
+    </tr>`;
+  }
+  t += `<tr style="border-top:2px solid #C3AFF2;background:#F5F2FD;">
+    <td style="padding:7px 8px;font-weight:700;">FY 2025</td>
+    <td style="text-align:right;padding:7px 8px;font-weight:800;color:#3B2A73;">${fmtK(ytd25full.inv)}</td>
+    <td style="text-align:right;padding:7px 8px;font-weight:700;">${fmtK(ytd25full.brand)} <span style="font-size:10px;color:#7145D6;">(${pct(ytd25full.brand,ytd25full.inv)})</span></td>
+    <td style="text-align:right;padding:7px 8px;font-weight:700;">${fmtK(ytd25full.acq)} <span style="font-size:10px;color:#0C936B;">(${pct(ytd25full.acq,ytd25full.inv)})</span></td>
+    <td style="text-align:right;padding:7px 8px;font-weight:700;">${fmtK(ytd25full.eng)} <span style="font-size:10px;color:#5555AA;">(${pct(ytd25full.eng,ytd25full.inv)})</span></td>
+    <td style="text-align:right;padding:7px 8px;font-weight:700;color:#aaa;font-style:italic;border-left:2px dashed #ddd;">${fmtK(ytd25full.disc)}</td>
+  </tr>`;
+  t += '</tbody></table>';
+
+  t += `<div style="font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--gray-n60);margin:0 0 8px;">
+    YTD Ene–May · Split 2026 vs 2025</div>
+  <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+    <div style="flex:2;min-width:260px;position:relative;height:200px;"><canvas id="invYtdChart"></canvas></div>
+    <div id="invYtdLegend" style="flex:1;min-width:160px;display:flex;flex-direction:column;gap:10px;padding-top:8px;"></div>
+  </div>
+  <div style="font-size:11px;color:var(--gray-n60);margin-top:6px;">
+    2026 YTD (sólido) vs 2025 YTD mismo período (transparente). Δ% = variación YoY por partida.<br>
+    <strong>Descuentos</strong> está incluido dentro de Brand · ACQ · Engagement — se muestra como referencia, no es una partida adicional.</div>`;
+
+  wrap.innerHTML = t;
+
+  // ── YTD COMPARISON CHART ──
+  const ytdCtx = document.getElementById('invYtdChart');
+  if(ytdCtx) {
+    if(window._invYtdChart) window._invYtdChart.destroy();
+    const CATS   = ['Brand','Acquisition','Engagement','Descuentos'];
+    const COLS   = ['brand','acq','eng','disc'];
+    const CCOLORS= ['#7145D6','#0C936B','#C3AFF2','#EA8C2E'];
+
+    let ytd26b={inv:0,brand:0,acq:0,eng:0,disc:0}, ytd25b={inv:0,brand:0,acq:0,eng:0,disc:0};
+    for(let i=0;i<nMonths;i++){
+      const m26=d.a26[i], m25=d.a25[i];
+      ['inv','brand','acq','eng','disc'].forEach(k=>{ytd26b[k]+=m26[k];ytd25b[k]+=m25[k];});
+    }
+    const vals26 = COLS.map(k => ytd26b[k]/1e6);
+    const vals25 = COLS.map(k => ytd25b[k]/1e6);
+
+    const legEl = document.getElementById('invYtdLegend');
+    if(legEl) {
+      legEl.innerHTML = CATS.map((cat,i) => {
+        const v26=ytd26b[COLS[i]], v25=ytd25b[COLS[i]];
+        const delta = v25>0 ? (v26-v25)/v25*100 : null;
+        const dcol  = delta===null?'':delta<=0?'#0C936B':'#E74A41';
+        const dsign = delta!==null&&delta>=0?'+':'';
+        const isDisc = cat === 'Descuentos';
+        return `<div style="display:flex;align-items:center;gap:8px;${isDisc?'margin-top:6px;padding-top:6px;border-top:1px dashed #ccc;opacity:0.75;':''}">
+          <span style="width:12px;height:12px;border-radius:3px;${isDisc?'border:2px dashed #EA8C2E;background:transparent;':'background:'+CCOLORS[i]+';'}flex-shrink:0;display:inline-block;"></span>
+          <div>
+            <div style="font-size:12px;font-weight:700;color:#1F123F;">${cat}${isDisc?' <span style="font-size:9px;font-weight:400;color:#EA8C2E;">(incluido ↑)</span>':''}</div>
+            <div style="font-size:11px;color:var(--gray-n60);">${(v26/1e6).toFixed(2)}M
+              ${delta!==null?`<span style="color:${dcol};font-weight:700;">(${dsign}${delta.toFixed(1)}%)</span>`:''}
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    window._invYtdChart = new Chart(ytdCtx.getContext('2d'), {
+      type:'bar',
+      data:{
+        labels: CATS,
+        datasets:[
+          {label:'2026 YTD', data:vals26,
+            backgroundColor: CATS.map((cat,i) => cat==='Descuentos' ? 'rgba(234,140,46,0.3)' : CCOLORS[i]),
+            borderColor: CATS.map((cat,i) => cat==='Descuentos' ? '#EA8C2E' : CCOLORS[i]),
+            borderWidth: CATS.map(cat => cat==='Descuentos' ? 2 : 0),
+            borderRadius:4},
+          {label:'2025 YTD', data:vals25,
+            backgroundColor: CATS.map((cat,i) => cat==='Descuentos' ? 'rgba(234,140,46,0.10)' : CCOLORS[i]+'44'),
+            borderColor: CCOLORS, borderWidth:1.5, borderRadius:4},
+        ]
+      },
+      options:{
+        indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{
+          legend:{display:true,position:'top',labels:{font:{size:11},color:'#1F123F',boxWidth:12,boxHeight:12}},
+          tooltip:{
+            backgroundColor:'rgba(31,18,63,0.92)',titleColor:'#EFE9FC',bodyColor:'#DDD2F8',
+            padding:10,cornerRadius:8,
+            callbacks:{label(c){return ` ${c.dataset.label}: ${c.raw.toFixed(2)}M USD`;}}
+          }
+        },
+        scales:{
+          x:{grid:{color:'rgba(0,0,0,0.04)'},ticks:{color:'#717182',font:{size:10},callback:v=>typeof v==='number'?v.toFixed(1)+'M':''}},
+          y:{grid:{display:false},ticks:{color:'#717182',font:{size:11}}}
+        }
+      }
+    });
+  }
+}
+
+
+function toggleReadme() {
+  const panel = document.getElementById('readmePanel');
+  const main  = document.getElementById('mainContent');
+  const tab   = document.getElementById('readmeTab');
+  const isOpen = panel.classList.contains('visible');
+  panel.classList.toggle('visible', !isOpen);
+  main.style.display = isOpen ? '' : 'none';
+  tab.classList.toggle('active', !isOpen);
+}
+
+render();
+</script>
+</body>
+</html>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
